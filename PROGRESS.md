@@ -11,7 +11,7 @@
 | M0 | Architecture & Agent Governance | VERIFIED | Architect | Markdown package |
 | M1 | Monorepo Foundation | VERIFIED | Orchestrator / Backend / QA | TEST_REPORT.md TR-20260907-M1-RERUN; independent verification passed; baseline commit 9294b50 pushed |
 | M2 | Auth + RBAC | READY_FOR_TEST | Backend / Architect | M2.1 VERIFIED; M2.2 READY_FOR_TEST (API/DB Verified); M2.3 Scoped Guards VERIFIED (TR-20260907-M2-3); M2.4 Admin User/Role Management VERIFIED (TR-20260907-M2-4). Overall M2 pending browser runtime verification. |
-| M3 | CMS Core | IN_PROGRESS | Backend/Admin | M3.1 CMS Core Vertical Slice VERIFIED (TR-20260907-M3-1; Content Types, 5 core field types, bi-directional no-shadowing, revision-pointer lifecycle, singletons, optimistic concurrency, non-destructive draft edits, and public resolver verified against clean PostgreSQL 16 DB). |
+| M3 | CMS Core | IN_PROGRESS | Backend/Admin | M3.1 Content Engine DB/API: VERIFIED, M3.1 Admin UI Build: PASS, M3.1 Browser Runtime: NOT RUN / READY_FOR_TEST, M3.1 Overall: READY_FOR_TEST (TR-20260907-M3-1; Content Types, 5 core field types, bi-directional no-shadowing race test, revision ownership rejection, content type immutability, canonical BCP-47 locale, revision-pointer lifecycle, singletons, optimistic concurrency, non-destructive draft edits, and public resolver verified against clean PostgreSQL 16 DB). |
 | M4 | Media + Menu + Forms + Settings | TODO | Backend/Admin | - |
 | M5 | Page Builder + Module Registry | TODO | Admin/Frontend | - |
 | M6 | Theme Engine + Responsive Config | TODO | Frontend/Design | - |

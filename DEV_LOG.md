@@ -305,7 +305,44 @@ No production/service installation; .local-postgres artifacts kept and ignored.
 - M3.1 Admin UI build: `PASS`
 - M3.1 Browser runtime: `NOT RUN / READY_FOR_TEST`
 - Milestone M3 overall status: `IN_PROGRESS` (M3.1 Core Slice: `VERIFIED`)
-**Next exact task:** M3.2 Taxonomy & Advanced Content Engine or M4 Media Library checkpoint.
+**Next exact task:** M3.1 Invariant Closure.
+
+---
+
+## 2026-09-07 09:50 — M3.1 Invariant Closures & Test Hardening
+
+**Agent/Role:** Backend / Lead Architect / QA
+**Task:** Hoàn tất toàn bộ invariant closures của Milestone M3.1 theo yêu cầu:
+1. Revision ownership integrity: Đảm bảo `current_revision_id` và `published_revision_id` của Entry A không thể trỏ tới revision thuộc Entry B. Xác minh ranh giới application/transaction boundary trong `publishContentEntry` và bổ sung integration negative test.
+2. Immutable Content Type identity: Chốt policy `key`, `scope_kind`, `site_id` immutable sau khi tạo; `kind` immutable khi đã có bất kỳ `ContentEntry` nào tồn tại. Bổ sung rejection logic và negative test.
+3. No-shadowing concurrency race test: Bổ sung integration test concurrency thật (`Promise.all`) tạo song song GLOBAL type và SITE type cùng key. Kết quả: chính xác 1 request thành công (201), 1 request nhận xung đột (409 Conflict), không deadlock nhờ PostgreSQL advisory transaction lock (`pg_advisory_xact_lock(hashtext(LOWER(key)))`).
+4. Canonical BCP-47 locale validation: Bổ sung hàm validation chuẩn BCP-47 subset (`/^[a-z]{2,3}(-[A-Za-z0-9]{2,4})*$/`) chấp nhận `vi`, `en`, `zh-CN` và từ chối các chuỗi locale không hợp lệ. Đảm bảo `translation_group_id` được server quản lý.
+
+**Files changed:**
+- `apps/api/src/content.service.ts`: Thêm `isValidLocale`, `normalizeLocale`, kiểm tra ContentType identity immutability, kiểm tra revision ownership integrity boundary, và áp dụng validation cho entry creation.
+- `packages/database/src/database.integration.test.ts`: Bổ sung 4 integration test cases kiểm thử chi tiết các invariants trên.
+- `PROJECT_STATE.md`, `PROGRESS.md`, `HANDOFF.md`, `TEST_REPORT.md`: Đồng bộ trạng thái:
+  - M3.1 Content Engine DB/API: `VERIFIED`
+  - M3.1 Admin UI Build: `PASS`
+  - M3.1 Browser Runtime: `NOT RUN / READY_FOR_TEST`
+  - M3.1 Overall: `READY_FOR_TEST`
+
+**Commands:**
+- `pnpm lint` -> PASS (0 errors, 0 warnings)
+- `pnpm typecheck` -> PASS (9 Turbo tasks)
+- `pnpm test` -> PASS (17 unit tests)
+- `pnpm build` -> PASS (6 Turbo tasks)
+- `pnpm test:integration` -> PASS (5 full integration suites on `m31_clean_verify_db`)
+- `pnpm test:smoke` -> PASS (HTTP 200/503 tests)
+- `pnpm db:generate` -> PASS ("No schema changes, nothing to migrate 😴")
+
+**Resulting status:**
+- M3.1 Content Engine DB/API: `VERIFIED`
+- M3.1 Admin UI Build: `PASS`
+- M3.1 Browser Runtime: `NOT RUN / READY_FOR_TEST`
+- M3.1 Overall: `READY_FOR_TEST`
+- Milestone M3: `IN_PROGRESS`
+**Next exact task:** M3.2 Taxonomy Architecture Checkpoint (Không sinh migration, dừng trước implementation).
 
 
 

@@ -8,9 +8,10 @@
 
 - M2 overall: `READY_FOR_TEST` (Backend/RBAC `VERIFIED`, Admin UI build `PASS`, Browser E2E `NOT RUN`)
 - M3 overall: `IN_PROGRESS`
-- M3.1 CMS Core Vertical Slice: `VERIFIED`
-- M3.1 Admin UI build: `PASS`
-- M3.1 Browser runtime: `NOT RUN / READY_FOR_TEST`
+- M3.1 Content Engine DB/API: `VERIFIED`
+- M3.1 Admin UI Build: `PASS`
+- M3.1 Browser Runtime: `NOT RUN / READY_FOR_TEST`
+- M3.1 Overall: `READY_FOR_TEST`
 - M3.2 / M4: `NOT STARTED`
 - Target Branch: `main`
 

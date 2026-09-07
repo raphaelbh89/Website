@@ -191,8 +191,25 @@ export function validateEntryDataAgainstSchema(
   return { valid: true, validatedData: result };
 }
 
+export function isValidLocale(locale: string): boolean {
+  // Normalized BCP-47 subset (e.g. en, vi, zh-CN, pt-BR, es-419)
+  return /^[a-z]{2,3}(-[A-Za-z0-9]{2,4})*$/.test(locale.trim());
+}
+
+export function normalizeLocale(locale: string): string {
+  const trimmed = locale.trim();
+  const parts = trimmed.split('-');
+  const primary = parts[0]?.toLowerCase() || trimmed.toLowerCase();
+  if (parts.length === 1 || !parts[1]) return primary;
+  return `${primary}-${parts[1].toUpperCase()}`;
+}
+
 export class ContentService {
   constructor(private database: ReturnType<typeof createDatabase>) {}
+
+  // ---------------------------------------------------------------------------
+  // Content Type Operations
+  // ---------------------------------------------------------------------------
 
   async createContentType(data: {
     key: string;
@@ -370,6 +387,10 @@ export class ContentService {
     data: {
       name?: string;
       description?: string;
+      kind?: 'single' | 'collection';
+      key?: string;
+      scopeKind?: 'global' | 'site';
+      siteId?: string | null;
       dataSchema?: unknown;
       uiSchema?: unknown;
     }
@@ -378,6 +399,34 @@ export class ContentService {
       where: (t, { eq: eqOp }) => eqOp(t.id, id),
     });
     if (!existing) return { error: 'Content type not found', status: 404 };
+
+    // Invariant: key, scopeKind, siteId are strictly immutable after creation
+    if (data.key !== undefined && data.key.trim().toLowerCase() !== existing.key) {
+      return { error: 'ContentType key is immutable after creation', status: 400 };
+    }
+    if (data.scopeKind !== undefined && data.scopeKind !== existing.scopeKind) {
+      return { error: 'ContentType scopeKind is immutable after creation', status: 400 };
+    }
+    if (data.siteId !== undefined && (data.siteId || null) !== (existing.siteId || null)) {
+      return { error: 'ContentType siteId is immutable after creation', status: 400 };
+    }
+
+    // Check entry count once for kind & schema mutations
+    const entryCountRes = await this.database.db
+      .select({ count: sql<number>`count(*)` })
+      .from(contentEntries)
+      .where(eq(contentEntries.contentTypeId, existing.id));
+    const entryCount = Number(entryCountRes[0]?.count || 0);
+
+    // Invariant: kind is immutable once any ContentEntry exists
+    if (data.kind !== undefined && data.kind !== existing.kind) {
+      if (entryCount > 0) {
+        return {
+          error: `ContentType kind cannot be changed to "${data.kind}" because content entries already exist`,
+          status: 400,
+        };
+      }
+    }
 
     const updates: Record<string, unknown> = { updatedAt: new Date() };
 
@@ -388,6 +437,9 @@ export class ContentService {
     if (data.description !== undefined) {
       updates.description = data.description.trim() || null;
     }
+    if (data.kind !== undefined && entryCount === 0) {
+      updates.kind = data.kind;
+    }
     if (data.uiSchema !== undefined) {
       updates.uiSchema = data.uiSchema;
     }
@@ -397,13 +449,6 @@ export class ContentService {
       if (!validation.valid || !validation.dataSchema) {
         return { error: validation.error || 'Invalid data schema', status: 400 };
       }
-
-      // Check if entries exist
-      const entryCountRes = await this.database.db
-        .select({ count: sql<number>`count(*)` })
-        .from(contentEntries)
-        .where(eq(contentEntries.contentTypeId, existing.id));
-      const entryCount = Number(entryCountRes[0]?.count || 0);
 
       if (entryCount > 0) {
         // Breaking change detection
@@ -471,7 +516,10 @@ export class ContentService {
       return { error: typeRes.error || 'Content type not found', status: typeRes.status || 404 };
     }
     const contentType = typeRes.contentType;
-    const locale = (data.locale || 'vi').trim().toLowerCase();
+    if (!data.locale || !isValidLocale(data.locale)) {
+      return { error: `Invalid locale "${data.locale || ''}". Must be a valid BCP-47 tag (e.g. "vi", "en", "zh-CN")`, status: 400 };
+    }
+    const locale = normalizeLocale(data.locale);
 
     if (!data.title?.trim()) {
       return { error: 'Entry title is required', status: 400 };
@@ -710,6 +758,12 @@ export class ContentService {
         return { error: 'Current revision not found', status: 500 };
       }
       const currentRev = currentRevRes.rows[0];
+
+      // Invariant: Revision ownership integrity
+      if (currentRev.entry_id !== entry.id) {
+        await client.query('ROLLBACK');
+        return { error: 'Integrity violation: revision does not belong to this content entry', status: 400 };
+      }
 
       // Slug conflict check for collection entries
       let publishedSlug: string | null = null;

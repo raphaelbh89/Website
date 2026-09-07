@@ -1675,6 +1675,152 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
       cookies: siteBCookies,
     });
     expect(listSiteAContentCrossRes.statusCode).toBe(403);
+
+    // =========================================================================
+    // M3.1 Invariant Closures:
+    // 1. Revision Ownership Integrity Negative Test
+    // 2. ContentType Identity Immutability
+    // 3. No-Shadowing Concurrency Race
+    // 4. BCP-47 Locale Validation
+    // =========================================================================
+
+    // 1. Revision Ownership Integrity Negative Test:
+    // Entry A cannot have its current_revision_id or published_revision_id point to a revision belonging to Entry B
+    // Let's create Entry B on Site A
+    const createEntryBRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA.id}/content/m3_article`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Entry B for Integrity Test',
+        locale: 'vi',
+        data: { headline: 'Entry B Headline', category: 'news' },
+      },
+    });
+    expect(createEntryBRes.statusCode).toBe(201);
+    const revB1Id = createEntryBRes.json().revision.id;
+
+    // Direct DB attempt to point Entry A's current_revision_id to Revision B1:
+    // When attempting to publish Entry A while current_revision_id was tampered to point to Revision B1,
+    // the atomic publish service detects entry_id mismatch and rejects with 400.
+    await database.pool.query(
+      'UPDATE content_entries SET current_revision_id = $1 WHERE id = $2',
+      [revB1Id, entryId]
+    );
+
+    const publishTamperedRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA.id}/content/m3_article/${entryId}/publish`,
+      cookies: adminCookies,
+    });
+    expect(publishTamperedRes.statusCode).toBe(400);
+    expect(publishTamperedRes.json().message).toContain('Integrity violation: revision does not belong to this content entry');
+
+    // 2. ContentType Identity Immutability:
+    // Key, scopeKind, siteId are immutable.
+    // Kind is immutable once ContentEntry exists.
+    const patchKeyRes = await app.inject({
+      method: 'PATCH',
+      url: `/content-types/${globalType.id}`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: { key: 'mutated_key' },
+    });
+    expect(patchKeyRes.statusCode).toBe(400);
+    expect(patchKeyRes.json().message).toContain('ContentType key is immutable after creation');
+
+    const patchKindWithEntriesRes = await app.inject({
+      method: 'PATCH',
+      url: `/content-types/${globalType.id}`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: { kind: 'single' },
+    });
+    expect(patchKindWithEntriesRes.statusCode).toBe(400);
+    expect(patchKindWithEntriesRes.json().message).toContain('ContentType kind cannot be changed to "single" because content entries already exist');
+
+    // 3. No-Shadowing Concurrency Race:
+    // Concurrently try to create GLOBAL type "concurrent_type" and SITE type "concurrent_type"
+    const concurrentKey = 'concurrent_type';
+    const [resGlobal, resSite] = await Promise.all([
+      app.inject({
+        method: 'POST',
+        url: '/content-types',
+        headers: { 'content-type': 'application/json' },
+        cookies: adminCookies,
+        payload: {
+          key: concurrentKey,
+          name: 'Concurrent Global',
+          kind: 'collection',
+          scopeKind: 'global',
+          dataSchema: { version: 1, fields: [{ key: 'f1', label: 'F1', type: 'text' }] },
+        },
+      }),
+      app.inject({
+        method: 'POST',
+        url: '/content-types',
+        headers: { 'content-type': 'application/json' },
+        cookies: adminCookies,
+        payload: {
+          key: concurrentKey,
+          name: 'Concurrent Site',
+          kind: 'collection',
+          scopeKind: 'site',
+          siteId: siteA.id,
+          dataSchema: { version: 1, fields: [{ key: 'f1', label: 'F1', type: 'text' }] },
+        },
+      }),
+    ]);
+
+    const statusCodes = [resGlobal.statusCode, resSite.statusCode].sort();
+    // Exactly one succeeds (201) and exactly one receives conflict (409)
+    expect(statusCodes).toEqual([201, 409]);
+
+    // 4. BCP-47 Locale Validation:
+    // Valid locales: vi, en, zh-CN
+    // Invalid locales: invalid!!locale, 12345, empty
+    const validLocaleEnRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA.id}/content/m3_article`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        title: 'English Article',
+        locale: 'en',
+        data: { headline: 'English Headline', category: 'news' },
+      },
+    });
+    expect(validLocaleEnRes.statusCode).toBe(201);
+    expect(validLocaleEnRes.json().entry.locale).toBe('en');
+
+    const validLocaleZhRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA.id}/content/m3_article`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Chinese Article',
+        locale: 'zh-CN',
+        data: { headline: 'Chinese Headline', category: 'news' },
+      },
+    });
+    expect(validLocaleZhRes.statusCode).toBe(201);
+    expect(validLocaleZhRes.json().entry.locale).toBe('zh-CN');
+
+    const invalidLocaleRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA.id}/content/m3_article`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Invalid Locale Article',
+        locale: 'invalid!!@@locale',
+        data: { headline: 'Headline', category: 'news' },
+      },
+    });
+    expect(invalidLocaleRes.statusCode).toBe(400);
+    expect(invalidLocaleRes.json().message).toContain('Invalid locale');
   } finally {
     await app.close();
   }

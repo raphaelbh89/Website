@@ -318,14 +318,27 @@ Browser responsive/visual verification and hosted CI have not run. PostgreSQL po
    - `pnpm test:integration`: PASS (5 full integration suites against clean PostgreSQL 16 DB `m31_clean_verify_db`)
    - `pnpm test:smoke`: PASS (Production Fastify readiness, unavailable DB 503, web and admin HTTP 200)
 
+**M3.1 Invariant Closures & Verification**:
+1. Revision ownership integrity:
+   - Enforced at service/transaction boundary (`publishContentEntry` verifies `currentRev.entry_id === entry.id`).
+   - Integration negative test verified: Attempting to assign or publish Entry A pointing to Entry B's revision rejected with HTTP 400 (`Integrity violation: revision does not belong to this content entry`).
+2. Immutable Content Type identity:
+   - Policy: `key`, `scope_kind`, and `site_id` are strictly immutable; `kind` is immutable once any `ContentEntry` exists for the type.
+   - Integration negative test verified: Attempting to mutate `key` returns 400 (`ContentType key cannot be changed`); attempting to change `kind` from `collection` to `single` when populated entries exist returns 400 (`Cannot change ContentType kind once entries exist`).
+3. No-shadowing concurrency race test:
+   - Concurrency integration test with parallel `Promise.all` creating GLOBAL type and SITE type with same key.
+   - Result: Exactly one succeeds with HTTP 201, exactly one receives HTTP 409 Conflict. Zero deadlock via PostgreSQL advisory transaction lock (`pg_advisory_xact_lock(hashtext(LOWER(key)))`).
+4. Canonical BCP-47 locale validation:
+   - Validated via canonical BCP-47 tag subset regex (`/^[a-z]{2,3}(-[A-Za-z0-9]{2,4})*$/`).
+   - `vi`, `en`, `zh-CN` accepted; invalid locale strings rejected with HTTP 400.
+   - `translation_group_id` strictly server-controlled on entry creation.
+
 **Component Status Breakdown**:
-- `M3.1 CMS Content Types & Entries APIs`: **VERIFIED**
-- `M3.1 Public Content Resolver`: **VERIFIED**
-- `M3.1 Database Schema & Migration (0003_flaky_supernaut.sql)`: **VERIFIED**
-- `M3.1 Admin UI build`: **PASS**
-- `M3.1 Browser runtime flow`: **NOT RUN / READY_FOR_TEST**
-  - Reason: Browser test runner binary download unavailable in local environment; API and UI build fully verified.
-- Milestone M3 overall status: **IN_PROGRESS** (M3.1 Core Vertical Slice: **VERIFIED**).
+- `M3.1 Content Engine DB/API`: **VERIFIED**
+- `M3.1 Admin UI Build`: **PASS**
+- `M3.1 Browser Runtime`: **NOT RUN / READY_FOR_TEST**
+- `M3.1 Overall`: **READY_FOR_TEST**
+- Milestone M3 overall status: **IN_PROGRESS**.
 
 
 

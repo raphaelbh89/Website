@@ -4,8 +4,8 @@
 
 ## Project Status
 
-- Stage: `M3_IN_PROGRESS_M31_VERIFIED` (M1 foundation `VERIFIED` [commit `9294b50`]; M2 Identity & RBAC `READY_FOR_TEST` [backend `VERIFIED`, commit `61b91bd`]; M3.1 CMS Core Vertical Slice `VERIFIED`).
-- Source implementation: M3.1 Content Engine Vertical Slice fully implemented and verified via automated integration suites against clean PostgreSQL 16 DB and Admin UI builds. Non-destructive draft editing, bi-directional no-shadowing with advisory locks, singleton invariant, published slug projection, optimistic concurrency, and public content resolver verified. Browser runtime flow remains `READY_FOR_TEST / NOT RUN`.
+- Stage: `M3_IN_PROGRESS` (M1 foundation `VERIFIED` [commit `9294b50`]; M2 Identity & RBAC `READY_FOR_TEST` [backend `VERIFIED`, commit `61b91bd`]; M3.1 Content Engine DB/API: `VERIFIED`, Admin UI Build: `PASS`, Browser Runtime: `NOT RUN / READY_FOR_TEST`, M3.1 Overall: `READY_FOR_TEST`).
+- Source implementation: M3.1 Content Engine Vertical Slice fully implemented and verified via automated integration suites against clean PostgreSQL 16 DB and Admin UI builds. Invariant closures verified: Revision ownership rejection on cross-entry assignment, ContentType identity immutability (`key`, `scope_kind`, `site_id` immutable; `kind` immutable once entries exist), parallel no-shadowing race serialization via PostgreSQL advisory transaction locks, and BCP-47 canonical locale validation. Browser runtime flow remains `NOT RUN / READY_FOR_TEST`.
 - Target architecture: `Modular Monolith / Monorepo`
 - Multi-Agent workflow: `DEFINED`
 

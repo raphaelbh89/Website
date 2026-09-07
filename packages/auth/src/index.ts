@@ -1,6 +1,13 @@
 import { hash, verify, Version, Algorithm } from '@node-rs/argon2';
 import { createHash, randomBytes } from 'node:crypto';
 
+export const SESSION_COOKIE_NAME = 'platform_session';
+export const SESSION_COOKIE_NAME_PROD = '__Host-platform_session';
+
+export function getSessionCookieName(isProduction: boolean): string {
+  return isProduction ? SESSION_COOKIE_NAME_PROD : SESSION_COOKIE_NAME;
+}
+
 export type Scope =
   | { kind: 'global' }
   | { kind: 'site'; siteId: string }

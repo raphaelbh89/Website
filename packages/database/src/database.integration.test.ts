@@ -12,7 +12,7 @@ import {
   rolePermissions,
   userRoleAssignments,
 } from './index.js';
-import { hashPassword, generateSessionToken, hashSessionToken } from '@platform/auth';
+import { hashPassword, generateSessionToken, hashSessionToken, getSessionCookieName } from '@platform/auth';
 import { buildApp } from '../../../apps/api/src/app.js';
 
 const url = process.env.TEST_DATABASE_URL;
@@ -50,7 +50,7 @@ it('migrates a clean PostgreSQL 16 DB with M2 identity schema, verifies repeat m
   expect(allPermissions.some((p) => p.key === 'users.read')).toBe(true);
 
   const superAdminRole = await database.db.query.roles.findFirst({
-    where: (r, { eq }) => eq(r.key, 'system_super_admin'),
+    where: (r, { eq: eqOp }) => eqOp(r.key, 'system_super_admin'),
   });
   expect(superAdminRole).toBeDefined();
   expect(superAdminRole?.isSystem).toBe(true);
@@ -193,6 +193,195 @@ it('migrates a clean PostgreSQL 16 DB with M2 identity schema, verifies repeat m
   });
   try {
     expect((await app.inject('/health/ready')).statusCode).toBe(200);
+  } finally {
+    await app.close();
+  }
+}, 30000);
+
+it('verifies M2.2 Fastify Auth API endpoints (login, cookies, me, logout, rate limiting, and origin protection) against PostgreSQL 16', async () => {
+  // 1. Create active test user and inactive test user
+  const validPassword = 'AdminPassword123!';
+  const passwordHash = await hashPassword(validPassword);
+
+  const [activeUser] = await database.db
+    .insert(users)
+    .values({
+      email: 'm2_auth_test@example.com',
+      passwordHash,
+      name: 'Auth Test User',
+      isActive: true,
+    })
+    .returning();
+
+  const [inactiveUser] = await database.db
+    .insert(users)
+    .values({
+      email: 'm2_inactive_test@example.com',
+      passwordHash,
+      name: 'Inactive User',
+      isActive: false,
+    })
+    .returning();
+  expect(inactiveUser.isActive).toBe(false);
+
+  const superAdminRole = await database.db.query.roles.findFirst({
+    where: (r, { eq: eqOp }) => eqOp(r.key, 'system_super_admin'),
+  });
+
+  if (superAdminRole) {
+    await database.db.insert(userRoleAssignments).values({
+      userId: activeUser.id,
+      roleId: superAdminRole.id,
+      scopeKind: 'global',
+      scopeId: null,
+    });
+  }
+
+  const app = buildApp({
+    checkDatabase: async () => {},
+    database,
+    nodeEnv: 'development',
+    corsOrigin: 'http://localhost:3001',
+  });
+  await app.ready();
+
+  try {
+    const cookieName = getSessionCookieName(false);
+
+    // 2. Unauthenticated GET /auth/me -> 401
+    const unauthMe = await app.inject({
+      method: 'GET',
+      url: '/auth/me',
+    });
+    expect(unauthMe.statusCode).toBe(401);
+    expect(unauthMe.json().error).toBe('UNAUTHORIZED');
+
+    // 3. Login with wrong password -> 401 generic
+    const wrongPass = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email: 'm2_auth_test@example.com', password: 'WrongPassword!' },
+    });
+    expect(wrongPass.statusCode).toBe(401);
+    expect(wrongPass.json().message).toBe('Invalid email or password');
+
+    // 4. Login with unknown email -> 401 generic
+    const unknownEmail = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email: 'nonexistent@example.com', password: 'AnyPassword!' },
+    });
+    expect(unknownEmail.statusCode).toBe(401);
+    expect(unknownEmail.json().message).toBe('Invalid email or password');
+
+    // 5. Login with inactive user -> 401 generic
+    const inactiveLogin = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email: 'm2_inactive_test@example.com', password: validPassword },
+    });
+    expect(inactiveLogin.statusCode).toBe(401);
+    expect(inactiveLogin.json().message).toBe('Invalid email or password');
+
+    // 6. Login valid -> 200, sets HttpOnly cookie, returns profile
+    const validLogin = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email: '  M2_Auth_Test@Example.Com  ', password: validPassword },
+    });
+    expect(validLogin.statusCode).toBe(200);
+    const loginBody = validLogin.json();
+    expect(loginBody.user.email).toBe('m2_auth_test@example.com');
+    expect(loginBody.user.name).toBe('Auth Test User');
+    expect(loginBody.token).toBeDefined();
+    expect(loginBody.user.passwordHash).toBeUndefined();
+
+    // Verify cookie
+    const setCookieHeader = validLogin.headers['set-cookie'] as string;
+    expect(setCookieHeader).toBeDefined();
+    expect(setCookieHeader).toContain(cookieName);
+    expect(setCookieHeader).toContain('HttpOnly');
+    expect(setCookieHeader).toContain('Path=/');
+
+    // 7. Verify session in PostgreSQL: DB has token_hash, NOT plain token
+    const rawToken = loginBody.token;
+    const tokenHash = hashSessionToken(rawToken);
+    const sessionInDb = await database.db.query.sessions.findFirst({
+      where: (s, { eq: eqOp }) => eqOp(s.tokenHash, tokenHash),
+    });
+    expect(sessionInDb).toBeDefined();
+    expect(sessionInDb?.userId).toBe(activeUser.id);
+
+    // Ensure raw token is not stored in DB
+    const allDbSessions = await database.db.select().from(sessions);
+    expect(allDbSessions.some((s) => s.tokenHash === rawToken)).toBe(false);
+
+    // 8. GET /auth/me with cookie -> 200 with user profile & grants
+    const authMeWithCookie = await app.inject({
+      method: 'GET',
+      url: '/auth/me',
+      cookies: {
+        [cookieName]: rawToken,
+      },
+    });
+    expect(authMeWithCookie.statusCode).toBe(200);
+    const meBody = authMeWithCookie.json();
+    expect(meBody.user.email).toBe('m2_auth_test@example.com');
+    expect(meBody.grants.length).toBeGreaterThanOrEqual(15);
+    expect(meBody.grants.some((g: { permission: string }) => g.permission === 'users.read')).toBe(true);
+
+    // 9. GET /auth/me with Bearer token header -> 200
+    const authMeWithBearer = await app.inject({
+      method: 'GET',
+      url: '/auth/me',
+      headers: {
+        authorization: `Bearer ${rawToken}`,
+      },
+    });
+    expect(authMeWithBearer.statusCode).toBe(200);
+    expect(authMeWithBearer.json().user.email).toBe('m2_auth_test@example.com');
+
+    // 10. POST /auth/logout -> revokes session from DB and clears cookie
+    const logoutRes = await app.inject({
+      method: 'POST',
+      url: '/auth/logout',
+      cookies: {
+        [cookieName]: rawToken,
+      },
+    });
+    expect(logoutRes.statusCode).toBe(200);
+    expect(logoutRes.json()).toEqual({ status: 'ok' });
+
+    // Verify session revoked from DB
+    const sessionAfterLogout = await database.db.query.sessions.findFirst({
+      where: (s, { eq: eqOp }) => eqOp(s.tokenHash, tokenHash),
+    });
+    expect(sessionAfterLogout).toBeUndefined();
+
+    // 11. Old session token is now rejected with 401
+    const meAfterLogout = await app.inject({
+      method: 'GET',
+      url: '/auth/me',
+      cookies: {
+        [cookieName]: rawToken,
+      },
+    });
+    expect(meAfterLogout.statusCode).toBe(401);
+
+    // 12. Rate limiting test on /auth/login (exceed 5 attempts)
+    for (let i = 0; i < 4; i++) {
+      await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        payload: { email: 'rate_limit@example.com', password: 'wrong' },
+      });
+    }
+    const rateLimitedRes = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email: 'rate_limit@example.com', password: 'wrong' },
+    });
+    expect(rateLimitedRes.statusCode).toBe(429);
   } finally {
     await app.close();
   }

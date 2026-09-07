@@ -1,19 +1,92 @@
-import { expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { buildApp } from './app.js';
-it('keeps liveness independent of unavailable dependencies and sanitizes readiness errors', async () => {
-  const app = buildApp(async () => { throw new Error('postgresql://secret@private-host'); });
-  try {
-    expect((await app.inject('/health/live')).json()).toEqual({ status: 'ok' });
-    const ready = await app.inject('/health/ready');
-    expect(ready.statusCode).toBe(503);
-    expect(ready.json()).toEqual({ status: 'not_ready' });
-    expect(ready.headers['cache-control']).toBe('no-store');
-    expect((await app.inject('/missing')).statusCode).toBe(404);
-  } finally { await app.close(); }
-});
-it('returns readiness when dependency probe succeeds', async () => {
-  const app = buildApp(async () => {});
-  try { expect((await app.inject('/health/ready')).statusCode).toBe(200); }
-  finally { await app.close(); }
+
+describe('Health and Readiness Probes', () => {
+  it('keeps liveness independent of unavailable dependencies and sanitizes readiness errors', async () => {
+    const app = buildApp(async () => {
+      throw new Error('postgresql://secret@private-host');
+    });
+    try {
+      expect((await app.inject('/health/live')).json()).toEqual({ status: 'ok' });
+      const ready = await app.inject('/health/ready');
+      expect(ready.statusCode).toBe(503);
+      expect(ready.json()).toEqual({ status: 'not_ready' });
+      expect(ready.headers['cache-control']).toBe('no-store');
+      expect((await app.inject('/missing')).statusCode).toBe(404);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('returns readiness when dependency probe succeeds', async () => {
+    const app = buildApp(async () => {});
+    try {
+      expect((await app.inject('/health/ready')).statusCode).toBe(200);
+    } finally {
+      await app.close();
+    }
+  });
 });
 
+describe('CSRF and Origin Validation Hook', () => {
+  it('accepts allowed origins on mutating endpoints', async () => {
+    const app = buildApp({
+      checkDatabase: async () => {},
+      corsOrigin: 'http://localhost:3001',
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        headers: {
+          origin: 'http://localhost:3001',
+        },
+        payload: { email: 'test@example.com', password: 'test' },
+      });
+      // 503 is because DB is not configured, but origin passed through the CSRF hook
+      expect(res.statusCode).not.toBe(403);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects foreign origin on mutating endpoints with 403', async () => {
+    const app = buildApp({
+      checkDatabase: async () => {},
+      corsOrigin: 'http://localhost:3001',
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        headers: {
+          origin: 'http://evil-attacker.com',
+        },
+        payload: { email: 'test@example.com', password: 'test' },
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json()).toEqual({ error: 'FORBIDDEN', message: 'Invalid request origin' });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('allows GET requests from any origin (safe methods)', async () => {
+    const app = buildApp({
+      checkDatabase: async () => {},
+      corsOrigin: 'http://localhost:3001',
+    });
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/health/live',
+        headers: {
+          origin: 'http://foreign-site.com',
+        },
+      });
+      expect(res.statusCode).toBe(200);
+    } finally {
+      await app.close();
+    }
+  });
+});

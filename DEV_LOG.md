@@ -158,5 +158,34 @@ No production/service installation; .local-postgres artifacts kept and ignored.
 **Resulting status:** M2.1: VERIFIED.
 **Next exact task:** M2.2 — Authentication Vertical Slice (Login API `POST /auth/login`, Logout `POST /auth/logout`, Me `GET /auth/me`, cookies/session Fastify plugin, và Admin Login UI).
 
+## 2026-09-07 08:26 — M2.2 Authentication Vertical Slice Completed
+
+**Agent/Role:** Backend / Security / Admin Frontend
+**Task:** Triển khai lát cắt M2.2: Fastify authentication infrastructure (`@fastify/cookie`, `@fastify/cors`, `@fastify/rate-limit`), `AuthService` (Argon2id verification, SHA-256 session token hashing, rolling update), API endpoints `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, CSRF Origin verification hook, Next.js Admin Login UI & Protected Dashboard, bootstrap admin CLI (`pnpm auth:bootstrap-admin`), and comprehensive integration & smoke tests.
+
+**Files changed:**
+- `packages/config/src/index.ts`: Bổ sung cấu hình `COOKIE_SECRET` và `CORS_ORIGIN`.
+- `packages/auth/src/index.ts`: Thêm hằng số và helper session cookie `SESSION_COOKIE_NAME`, `SESSION_COOKIE_NAME_PROD`, `getSessionCookieName`.
+- `apps/api/package.json`: Cài đặt `@fastify/cookie`, `@fastify/cors`, `@fastify/rate-limit`, `@platform/auth`, `drizzle-orm`.
+- `apps/api/src/auth.service.ts` (NEW): Triển khai `AuthService` (`login`, `resolveSession`, `logout`) tuân thủ nghiêm ngặt ADR-0005.
+- `apps/api/src/app.ts`: Tích hợp plugins, CSRF preHandler hook kiểm tra mutating origin, và 3 authentication endpoints.
+- `apps/api/src/server.ts`: Truyền biến môi trường runtime cho Fastify app.
+- `apps/api/src/app.test.ts`: Thêm unit tests cho CSRF Origin verification.
+- `apps/admin/app/login/page.tsx` (NEW): Triển khai Next.js Admin Login form.
+- `apps/admin/app/page.tsx`: Triển khai Protected Admin Dashboard.
+- `packages/database/src/cli.ts` & `package.json`: Triển khai command `pnpm auth:bootstrap-admin`.
+- `packages/database/src/database.integration.test.ts`: Mở rộng integration test kiểm thử toàn bộ auth flow trên PostgreSQL 16 thật.
+
+**Commands:**
+- `pnpm lint` -> PASS (0 warnings/errors)
+- `pnpm typecheck` -> PASS (9 tasks)
+- `pnpm test` -> PASS (12 unit tests)
+- `pnpm build` -> PASS (6 tasks)
+- `TEST_DATABASE_URL=.../m2_clean_verify_db pnpm test:integration` -> PASS (2 suites)
+- `TEST_DATABASE_URL=.../m2_smoke_db pnpm test:smoke` -> PASS
+
+**Resulting status:** M2.2: VERIFIED.
+**Next exact task:** M2.3 — Scoped Authorization Guards (RBAC middleware/preHandler, permission enforcement, site-scoped resolution).
+
 
 

@@ -6,45 +6,39 @@
 
 ### Session State
 
-- Current milestone: M2 IN_PROGRESS (M2.1 Identity Schema & Persistence `VERIFIED`; ready for M2.2 Authentication Vertical Slice).
-- Working tree: Clean baseline commit `9294b50` on `origin/main`. Changes for ADRs and M2.1 staged/uncommitted.
+- Current milestone: M2 IN_PROGRESS (M2.1 Identity Schema & Persistence `VERIFIED` [commit `a7b5a2d`]; M2.2 Authentication Vertical Slice `VERIFIED` [pending commit]; M2.3 Scoped Authorization Guards `TODO`).
+- Working tree: All M2.2 code implemented and verified. Ready to commit and push to `origin/main`.
 
 ### Completed
 
-- Baseline commit `9294b50` pushed to GitHub remote `origin/main`.
-- ADR-0005 (Auth & Session Strategy) and ADR-0006 (Scoped RBAC Strategy) formulated and accepted.
-- Vertical slice M2.1:
-  - Added `@node-rs/argon2` to `@platform/auth`.
-  - Implemented Argon2id password hashing, verification, email normalization, high-entropy session token generation, SHA-256 token hashing, and hierarchical scoped permission evaluation (`GLOBAL`, `SITE`, `CAMPUS`, `RESOURCE`).
-  - Implemented database schema in `@platform/database`: `users`, `sessions`, `roles`, `permissions`, `role_permissions`, `user_role_assignments` using UUIDv7 primary keys and cascade foreign keys.
-  - Generated and reviewed SQL migration `0001_milky_roland_deschain.sql`.
-  - Implemented idempotent database seed for 15 system permissions and `system_super_admin` system role with zero plain text secrets committed.
-  - Verified clean migration, repeated migration, seed idempotency, unique constraints, FK cascade, and persistence with real PostgreSQL 16.
-  - Lint, typecheck (9 tasks), unit tests (9 tests), build (6 tasks), integration tests, and smoke tests all PASS.
+- Baseline commit `9294b50` and M2.1 commit `a7b5a2d` pushed to GitHub remote `origin/main`.
+- Vertical slice M2.2 Authentication:
+  - Added `@fastify/cookie`, `@fastify/cors`, `@fastify/rate-limit`, `drizzle-orm`, `@platform/auth` to `apps/api`.
+  - Added `COOKIE_SECRET` and `CORS_ORIGIN` to `@platform/config`.
+  - Added cookie constants `SESSION_COOKIE_NAME`, `SESSION_COOKIE_NAME_PROD`, `getSessionCookieName` to `@platform/auth`.
+  - Implemented `AuthService` in `apps/api/src/auth.service.ts` with Argon2id password verification, SHA-256 session token hashing, rolling idle timeout (15m updates), session revocation, and generic 401 errors.
+  - Implemented endpoints in Fastify API:
+    - `POST /auth/login`: rate-limited (5/min), validates input, verifies user & password, stores SHA-256 token_hash in DB, issues HttpOnly SameSite=Lax cookie.
+    - `POST /auth/logout`: deletes/revokes session in DB, clears cookie with Max-Age=0.
+    - `GET /auth/me`: resolves session via cookie or Bearer token, rejects expired or inactive accounts, returns sanitized profile & grants.
+  - Implemented CSRF Origin protection: preHandler hook validating Origin/Referer for mutating browser requests against allowed CORS origins.
+  - Implemented Admin Login UI in `apps/admin/app/login/page.tsx` with email/password inputs, loading state, error alerts, and redirect on success.
+  - Implemented Protected Admin Dashboard in `apps/admin/app/page.tsx` that calls `GET /auth/me` on mount, redirects to `/login` if unauthenticated, and provides Sign Out button.
+  - Implemented Admin Bootstrap CLI in `packages/database/src/cli.ts` via `pnpm auth:bootstrap-admin` (supports `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME` env vars or interactive prompt, assigns `system_super_admin` role via proper RBAC).
+  - Expanded unit and integration test suites: 12 unit tests, 2 PostgreSQL 16 integration test suites, production build, and production smoke tests all PASS.
 
 ### Not Started
 
-- M2.2: Fastify auth endpoints (`POST /auth/login`, `POST /auth/logout`, `GET /auth/me`), cookies & session middleware, Admin Login UI.
-- M2.3: Scoped Authorization guards and permission enforcement middleware.
-- M2.4: Admin User and Role management CRUD.
+- M2.3: Scoped Authorization Guards (RBAC preHandler middleware for Fastify, site-scoped permission resolution, site isolation check).
+- M2.4: Admin User and Role management CRUD API & UI.
+- M3: CMS Core (Content types, entries, schema engine).
 - Hosted CI execution on GitHub Actions.
 
 ### Next Recommended Actions
 
-1. Commit M2.1 work: `feat(database,auth): implement identity schema, argon2id hashing and scoped rbac persistence`.
-2. Begin vertical slice M2.2:
-   - Add `@fastify/cookie`, `@fastify/cors`, `@fastify/rate-limit` to `apps/api`.
-   - Implement authentication service (verify credentials, create session, set HttpOnly cookie, retrieve me).
-   - Implement Next.js Admin login page and auth state provider.
-
-### Files changed / commands / limitations
-
-- Added: root workspace/tooling/env/Compose/CI configuration, apps/*, packages/*, scripts/smoke.mjs, ADR-0004 and local database instructions.
-- Updated: README, PROJECT_STATE, PROGRESS, TEST_REPORT, ISSUES, HANDOFF, DEV_LOG.
-- PASS commands and actual DB evidence: TEST_REPORT.md TR-20260907-M1. No product login/publish behavior is claimed.
-- Local PostgreSQL and fresh-install copy under .local-postgres are ignored, retained (not deleted), and must not be committed.
-- PostgreSQL portable was stopped successfully with pg_ctl; all smoke servers were stopped by the script. Data remains available for later QA.
-- Sandbox helper failed intermittently; edits used apply_patch directly through an authorized elevated process. Elevated Git needs command-scoped `-c safe.directory=E:/WebstiteCMS` due to sandbox account ownership; no global exception added.
+1. Commit M2.2 work: `feat(auth): implement M2.2 authentication vertical slice`.
+2. Push commit to `origin/main`.
+3. Proceed to milestone M2.3: Scoped Authorization Guards.
 
 ## Template cho handoff sau này
 

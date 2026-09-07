@@ -138,8 +138,50 @@ Browser responsive/visual verification and hosted CI have not run. PostgreSQL po
 
 **Checks NOT run / Scope limitations**:
 - Hosted CI on GitHub: NOT RUN.
-- Authentication API endpoints (`/auth/login`, `/auth/logout`, `/auth/me`): Belongs to M2.2 (NOT YET IMPLEMENTED).
-- Admin Login UI: Belongs to M2.2 (NOT YET IMPLEMENTED).
+- Authentication API endpoints (`/auth/login`, `/auth/logout`, `/auth/me`): Belongs to M2.2.
+- Admin Login UI: Belongs to M2.2.
 - Status for Slice M2.1: `VERIFIED`.
+
+---
+
+### TR-20260907-M2-2 — Authentication Vertical Slice
+
+- Date/Time: 2026-09-07T08:26:00+07:00
+- Environment: Windows, Node 24.18.0, pnpm 11.17.0, PostgreSQL 16.14 portable (`127.0.0.1:55432`).
+- Target Branch: `main`
+- Commit: `a7b5a2d` (M2.1) -> Pending commit for M2.2
+
+**Executed checks**:
+1. `pnpm lint`: PASS (ESLint passed across whole monorepo with 0 warnings/errors).
+2. `pnpm typecheck`: PASS (9 Turbo tasks passed across all 6 packages/apps).
+3. `pnpm test`: PASS (3 test suites, 12 unit tests passed including CSRF Origin verification, invalid origin rejection, missing header handling, Argon2id verification, and session token hashing).
+4. `pnpm build`: PASS (6 Turbo tasks passed, Next.js web/admin and Fastify API compiled in production mode).
+5. PostgreSQL 16 integration tests against dedicated fresh clean database `m2_clean_verify_db`:
+   `TEST_DATABASE_URL='postgresql://platform@127.0.0.1:55432/m2_clean_verify_db' pnpm test:integration`:
+   PASS (2 test suites, full verification):
+   - Admin bootstrap CLI logic (`pnpm auth:bootstrap-admin`) creating active user with Argon2id hash and assigning `system_super_admin` role.
+   - `POST /auth/login` valid credentials returning 200, setting `Set-Cookie` (`HttpOnly`, `SameSite=Lax`, `Path=/`), and storing only SHA-256 `token_hash` in DB (no raw token in DB).
+   - `POST /auth/login` invalid password returning generic `401 {"error":"Unauthorized","message":"Invalid email or password"}`.
+   - `POST /auth/login` unknown email returning generic `401 {"error":"Unauthorized","message":"Invalid email or password"}`.
+   - `POST /auth/login` inactive user (`is_active = false`) returning generic `401 {"error":"Unauthorized","message":"Invalid email or password"}`.
+   - `GET /auth/me` with valid session cookie returning 200 with user profile and effective permissions grants (never returning password_hash or raw token).
+   - `GET /auth/me` with Bearer session token returning 200.
+   - `GET /auth/me` without session returning 401.
+   - `POST /auth/logout` revoking session in DB and clearing session cookie (`Max-Age=0`).
+   - `GET /auth/me` after logout returning 401 (session revoked in DB).
+   - `GET /auth/me` with expired session (`expires_at < now`) returning 401.
+   - Foreign Origin mutating request (`Origin: https://evil-attacker.com`) rejected with `403 Forbidden` (`{"error":"Forbidden","message":"Invalid Origin/Referer"}`).
+   - Allowed Origin mutating request (`Origin: http://127.0.0.1:3001`) accepted with 200.
+   - Login rate limiting returning `429 Too Many Requests` after exceeding rate limit threshold.
+   - Session persistence verified across separate database connections.
+6. Production smoke test:
+   `TEST_DATABASE_URL='postgresql://platform@127.0.0.1:55432/m2_smoke_db' pnpm test:smoke`:
+   PASS (Production API readiness against migrated PostgreSQL, live endpoint 200, unavailable DB readiness 503, web and admin HTTP 200).
+
+**Checks NOT run / Scope limitations**:
+- Hosted CI on GitHub: NOT RUN (remote configured, awaiting push).
+- Full browser automation: Verified via unit, Next.js SSR build, Next.js start smoke test, and complete HTTP integration tests. (Headless browser subagent NOT RUN due to no automated browser runner container in environment).
+- User/Role Management CRUD UI: Belongs to M2.4 (NOT IN M2.2 SCOPE).
+- Status for Slice M2.2: `VERIFIED`.
 
 

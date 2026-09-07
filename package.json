@@ -15,6 +15,7 @@
     "db:generate": "pnpm --filter @platform/database generate",
     "db:migrate": "pnpm --filter @platform/database migrate",
     "db:seed": "pnpm --filter @platform/database seed",
+    "auth:bootstrap-admin": "pnpm --filter @platform/database exec tsx src/cli.ts bootstrap-admin",
     "test:smoke": "node scripts/smoke.mjs"
   },
   "devDependencies": {

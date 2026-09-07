@@ -1,6 +1,7 @@
 import { apiEnvironment, loadEnvironment } from '@platform/config';
 import { createDatabase } from '@platform/database';
 import { buildApp } from './app.js';
+
 loadEnvironment();
 const parsed = apiEnvironment.safeParse(process.env);
 if (!parsed.success) {
@@ -9,13 +10,33 @@ if (!parsed.success) {
 } else {
   const env = parsed.data;
   const database = createDatabase(env.DATABASE_URL);
-  const app = buildApp(async () => {
-    // Verify connectivity AND baseline schema, not just an open database port.
-    await database.pool.query('SELECT id FROM sites LIMIT 0');
-  }, true);
-  app.addHook('onClose', async () => { await database.pool.end(); });
-  for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => { void app.close(); });
-  try { await app.listen({ host: env.API_HOST, port: env.API_PORT }); }
-  catch { console.error('API startup failed. Check the bind address and port.'); await app.close(); process.exitCode = 1; }
-}
+  const app = buildApp({
+    checkDatabase: async () => {
+      // Verify connectivity AND baseline schema, not just an open database port.
+      await database.pool.query('SELECT id FROM sites LIMIT 0');
+    },
+    database,
+    logger: true,
+    nodeEnv: env.NODE_ENV,
+    cookieSecret: env.COOKIE_SECRET,
+    corsOrigin: env.CORS_ORIGIN,
+  });
 
+  app.addHook('onClose', async () => {
+    await database.pool.end();
+  });
+
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    process.once(signal, () => {
+      void app.close();
+    });
+  }
+
+  try {
+    await app.listen({ host: env.API_HOST, port: env.API_PORT });
+  } catch {
+    console.error('API startup failed. Check the bind address and port.');
+    await app.close();
+    process.exitCode = 1;
+  }
+}

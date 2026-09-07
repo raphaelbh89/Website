@@ -6,6 +6,7 @@ import {
   normalizeEmail,
   generateSessionToken,
   hashSessionToken,
+  getSessionCookieName,
   type EffectiveGrant,
   type Grant,
 } from './index.js';
@@ -82,5 +83,10 @@ describe('Email Normalization and Token Utilities', () => {
     expect(hash1).not.toEqual(token1); // Never store plain token
     expect(hash1).not.toEqual(hash2);
     expect(hashSessionToken(token1)).toBe(hash1); // Deterministic
+  });
+
+  it('selects correct cookie name according to production environment', () => {
+    expect(getSessionCookieName(false)).toBe('platform_session');
+    expect(getSessionCookieName(true)).toBe('__Host-platform_session');
   });
 });

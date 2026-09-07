@@ -40,10 +40,10 @@ describe('CSRF and Origin Validation Hook', () => {
         url: '/auth/login',
         headers: {
           origin: 'http://localhost:3001',
+          'content-type': 'application/json',
         },
         payload: { email: 'test@example.com', password: 'test' },
       });
-      // 503 is because DB is not configured, but origin passed through the CSRF hook
       expect(res.statusCode).not.toBe(403);
     } finally {
       await app.close();
@@ -61,6 +61,7 @@ describe('CSRF and Origin Validation Hook', () => {
         url: '/auth/login',
         headers: {
           origin: 'http://evil-attacker.com',
+          'content-type': 'application/json',
         },
         payload: { email: 'test@example.com', password: 'test' },
       });
@@ -71,7 +72,67 @@ describe('CSRF and Origin Validation Hook', () => {
     }
   });
 
-  it('allows GET requests from any origin (safe methods)', async () => {
+  it('validates referer origin fallback when Origin header is absent', async () => {
+    const app = buildApp({
+      checkDatabase: async () => {},
+      corsOrigin: 'http://localhost:3001',
+    });
+    try {
+      // Allowed referer
+      const allowedRes = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        headers: {
+          referer: 'http://localhost:3001/admin/login',
+          'content-type': 'application/json',
+        },
+        payload: { email: 'test@example.com', password: 'test' },
+      });
+      expect(allowedRes.statusCode).not.toBe(403);
+
+      // Foreign referer
+      const foreignRes = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        headers: {
+          referer: 'http://malicious-site.com/attack',
+          'content-type': 'application/json',
+        },
+        payload: { email: 'test@example.com', password: 'test' },
+      });
+      expect(foreignRes.statusCode).toBe(403);
+      expect(foreignRes.json()).toEqual({ error: 'FORBIDDEN', message: 'Invalid request referer' });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects invalid/non-JSON Content-Type on mutating endpoints with payload', async () => {
+    const app = buildApp({
+      checkDatabase: async () => {},
+      corsOrigin: 'http://localhost:3001',
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        headers: {
+          origin: 'http://localhost:3001',
+          'content-type': 'text/plain',
+        },
+        body: 'email=test@example.com&password=test',
+      });
+      expect(res.statusCode).toBe(415);
+      expect(res.json()).toEqual({
+        error: 'UNSUPPORTED_MEDIA_TYPE',
+        message: 'Expected application/json Content-Type',
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('allows safe GET requests from any origin without CSRF blocking', async () => {
     const app = buildApp({
       checkDatabase: async () => {},
       corsOrigin: 'http://localhost:3001',
@@ -85,6 +146,26 @@ describe('CSRF and Origin Validation Hook', () => {
         },
       });
       expect(res.statusCode).toBe(200);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('allows non-browser requests without Origin header on mutating endpoints', async () => {
+    const app = buildApp({
+      checkDatabase: async () => {},
+      corsOrigin: 'http://localhost:3001',
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        headers: {
+          'content-type': 'application/json',
+        },
+        payload: { email: 'test@example.com', password: 'test' },
+      });
+      expect(res.statusCode).not.toBe(403);
     } finally {
       await app.close();
     }

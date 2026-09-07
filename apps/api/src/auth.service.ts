@@ -118,6 +118,12 @@ export class AuthService {
       return null;
     }
 
+    // 24-hour idle timeout check per ADR-0005
+    const IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+    if (now.getTime() - sessionRecord.lastActiveAt.getTime() > IDLE_TIMEOUT_MS) {
+      return null;
+    }
+
     // Rolling idle timeout update (every 15 mins of activity)
     const fifteenMinutesAgo = new Date(now.getTime() - 15 * 60 * 1000);
     if (sessionRecord.lastActiveAt < fifteenMinutesAgo) {

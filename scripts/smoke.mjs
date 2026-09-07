@@ -3,7 +3,16 @@ import { once } from 'node:events';
 import assert from 'node:assert/strict';
 const children = [];
 function launch(args, env = {}) {
-  const child = spawn(process.execPath, args, { env: { ...process.env, NODE_ENV: 'production', NEXT_TELEMETRY_DISABLED: '1', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, args, {
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      NEXT_TELEMETRY_DISABLED: '1',
+      COOKIE_SECRET: 'smoke-test-production-cookie-secret-32-chars-min!',
+      ...env,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   let output = '';
   child.stdout.on('data', chunk => { output = (output + chunk).slice(-5000); });
   child.stderr.on('data', chunk => { output = (output + chunk).slice(-5000); });

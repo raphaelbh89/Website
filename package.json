@@ -1,0 +1,30 @@
+{
+  "name": "modular-website-platform",
+  "private": true,
+  "packageManager": "pnpm@11.17.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "lint": "eslint .",
+    "typecheck": "turbo run typecheck",
+    "test": "vitest run --exclude '**/*.integration.test.ts'",
+    "test:integration": "vitest run packages/database/src/database.integration.test.ts",
+    "build": "turbo run build",
+    "db:generate": "pnpm --filter @platform/database generate",
+    "db:migrate": "pnpm --filter @platform/database migrate",
+    "db:seed": "pnpm --filter @platform/database seed",
+    "test:smoke": "node scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.10.1",
+    "eslint": "10.10.0",
+    "turbo": "2.10.12",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.69.0",
+    "vitest": "4.0.18"
+  }
+}

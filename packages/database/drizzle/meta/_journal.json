@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1788741010394,
+      "tag": "0000_wakeful_marvel_apes",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "@platform/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@platform/config": "workspace:*",
+    "@platform/database": "workspace:*",
+    "fastify": "5.12.3"
+  }
+}

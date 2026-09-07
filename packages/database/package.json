@@ -13,7 +13,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "generate": "drizzle-kit generate",
     "migrate": "tsx src/cli.ts migrate",
-    "seed": "tsx src/cli.ts seed"
+    "seed": "tsx src/cli.ts seed",
+    "reset-db": "tsx src/reset-test-db.ts"
   },
   "dependencies": {
     "@platform/config": "workspace:*",

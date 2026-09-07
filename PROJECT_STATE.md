@@ -4,8 +4,8 @@
 
 ## Project Status
 
-- Stage: `M2_COMPLETED_BACKEND_VERIFIED` (M1 foundation `VERIFIED` [commit `9294b50`]; M2.1 Identity Schema & Persistence `VERIFIED` [commit `a7b5a2d`]; M2.2 Auth Vertical Slice `READY_FOR_TEST` [API/DB Verified, Browser Not Run]; M2.3 Scoped Authorization Guards `VERIFIED` [commit `d0a7782`]; M2.4 Admin User & Role Management `VERIFIED`).
-- Source implementation: M2 Identity, Auth, Scoped RBAC, and User/Role Management fully implemented and verified via automated integration suites against clean PostgreSQL 16 DB and Admin UI builds. Browser runtime flow remains `READY_FOR_TEST / NOT RUN`.
+- Stage: `M3_IN_PROGRESS_M31_VERIFIED` (M1 foundation `VERIFIED` [commit `9294b50`]; M2 Identity & RBAC `READY_FOR_TEST` [backend `VERIFIED`, commit `61b91bd`]; M3.1 CMS Core Vertical Slice `VERIFIED`).
+- Source implementation: M3.1 Content Engine Vertical Slice fully implemented and verified via automated integration suites against clean PostgreSQL 16 DB and Admin UI builds. Non-destructive draft editing, bi-directional no-shadowing with advisory locks, singleton invariant, published slug projection, optimistic concurrency, and public content resolver verified. Browser runtime flow remains `READY_FOR_TEST / NOT RUN`.
 - Target architecture: `Modular Monolith / Monorepo`
 - Multi-Agent workflow: `DEFINED`
 
@@ -18,7 +18,7 @@
 - TypeScript-first
 - Node.js 24 / pnpm 11.17.0 / Turborepo 2.10.12 / TypeScript 5.9.3 (ADR-0004).
 - Next.js 16.3.4 / React 19.2.8 for web/admin; Fastify 5.12.3 API.
-- Drizzle ORM 0.45.2 + Kit 0.31.10 / pg 8.23.0; generated SQL migrations for sites, identity schema, and unique constraint indexes.
+- Drizzle ORM 0.45.2 + Kit 0.31.10 / pg 8.23.0; generated SQL migrations for sites, identity schema, content engine schema (0003_flaky_supernaut.sql), and unique constraint partial indexes.
 - Vitest 4.0.18, ESLint 10.10.0; GitHub Actions verification workflow prepared.
 
 ### Apps
@@ -82,7 +82,7 @@ Multi-Agent orchestration based on persistent repo state. No dependency on a sin
 - **ADR-0005 (Accepted)**: Server-side opaque session, `HttpOnly; Secure; SameSite=Lax` cookies, SHA-256 session token hashing in DB, Argon2id (`@node-rs/argon2`) password hashing with RFC 9106 recommended parameters, generic auth errors, rate limiting on login via `@fastify/rate-limit`, explicit CORS origin check with credentials.
 - **ADR-0006 (Accepted)**: Scoped RBAC architecture (`GLOBAL`, `SITE`, `CAMPUS`, `RESOURCE` hierarchy). Separation of User -> RoleAssignment -> Role -> RolePermission -> Permission. Implementation covers `GLOBAL` and `SITE` scopes with inheritance down to sites, explicit allow-list, deny-by-default, and structured permission names (`users.read`, `content.publish`, etc.).
 - **ADR-0007 (Accepted)**: CMS Content Engine Schema, Canonical Field Registry (M3.1 core: text, textarea, number, boolean, select; deferred media/relation/richtext/repeater), Internal CMS Field Schema (dataSchema vs uiSchema), and Revision-Pointer Model (`content_entries` with `current_revision_id` & `published_revision_id` pointers + `content_entry_revisions` immutable snapshots) with optimistic concurrency control (`expectedRevision` / 409 Conflict) and schema evolution policy.
-- **ADR-0008 (Accepted)**: Content Scoping, Routing, Localization Invariants, and Scoped Permissions. Enforces No-Shadowing rule between Site-specific and Global Content Types, deterministic type resolution, strict Multi-Site isolation, Singleton partial unique indexes, Translation Group invariants (`translation_group_id` cannot cross site/type; unique locale per group), and Scoped RBAC alignment (`content_types.*` global/site, `content.*` site-scoped).
+- **ADR-0008 (Accepted)**: Content Scoping, Routing, Localization Invariants, and Scoped Permissions. Enforces Bi-directional No-Shadowing rule between Site-specific and Global Content Types with PostgreSQL advisory transaction lock serialization (`pg_advisory_xact_lock(hashtext(LOWER(key)))`), deterministic type resolution, strict Multi-Site isolation, Singleton partial unique indexes (`WHERE entry_kind = 'single'`), Published Slug unique routing projection (`WHERE published_slug IS NOT NULL`), Translation Group invariants (`translation_group_id`), and Scoped RBAC alignment (`content_types.*` global/site, `content.*` site-scoped).
 
 ## Decisions Not Yet Finalized (Deferred to later milestones)
 
@@ -108,6 +108,7 @@ Các mục sau phải tạo ADR trước khi implement nếu chưa được ch�
 
 ## Next Recommended Milestone
  
-Proceed to **`M3.1 Minimal Vertical Slice`** implementation upon plan approval (proving GLOBAL/SITE Content Types, schema validation, dynamic form renderer, draft revisions, atomic publishing, public published resolver, and scoped RBAC on clean PostgreSQL 16 DB).
+Proceed to **`M3.2 Taxonomy & Advanced Content Engine`** or **`M4 Media Library & Storage Abstraction`** upon architecture checkpoint and approval.
+
 
 

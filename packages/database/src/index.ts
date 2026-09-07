@@ -12,6 +12,9 @@ export {
   permissions,
   rolePermissions,
   userRoleAssignments,
+  contentTypes,
+  contentEntries,
+  contentEntryRevisions,
 } from './schema.js';
 
 export function createDatabase(connectionString: string) {
@@ -48,6 +51,8 @@ export const SYSTEM_PERMISSIONS = [
   { key: 'sites.read', name: 'View Sites', module: 'sites', description: 'View sites configuration' },
   { key: 'sites.manage', name: 'Manage Sites', module: 'sites', description: 'Create and configure websites' },
   { key: 'settings.manage', name: 'Manage Settings', module: 'settings', description: 'Manage platform and site settings' },
+  { key: 'content_types.read', name: 'View Content Types', module: 'content_types', description: 'View content type definitions' },
+  { key: 'content_types.manage', name: 'Manage Content Types', module: 'content_types', description: 'Create and configure content types and fields' },
   { key: 'content.read', name: 'Read Content', module: 'content', description: 'Read articles and content entries' },
   { key: 'content.create', name: 'Create Content', module: 'content', description: 'Create content entries' },
   { key: 'content.update', name: 'Update Content', module: 'content', description: 'Update existing content entries' },

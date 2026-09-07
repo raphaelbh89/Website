@@ -11,7 +11,7 @@
 | M0 | Architecture & Agent Governance | VERIFIED | Architect | Markdown package |
 | M1 | Monorepo Foundation | VERIFIED | Orchestrator / Backend / QA | TEST_REPORT.md TR-20260907-M1-RERUN; independent verification passed; baseline commit 9294b50 pushed |
 | M2 | Auth + RBAC | READY_FOR_TEST | Backend / Architect | M2.1 VERIFIED; M2.2 READY_FOR_TEST (API/DB Verified); M2.3 Scoped Guards VERIFIED (TR-20260907-M2-3); M2.4 Admin User/Role Management VERIFIED (TR-20260907-M2-4). Overall M2 pending browser runtime verification. |
-| M3 | CMS Core | TODO | Backend/Admin | - |
+| M3 | CMS Core | IN_PROGRESS | Backend/Admin | M3.1 CMS Core Vertical Slice VERIFIED (TR-20260907-M3-1; Content Types, 5 core field types, bi-directional no-shadowing, revision-pointer lifecycle, singletons, optimistic concurrency, non-destructive draft edits, and public resolver verified against clean PostgreSQL 16 DB). |
 | M4 | Media + Menu + Forms + Settings | TODO | Backend/Admin | - |
 | M5 | Page Builder + Module Registry | TODO | Admin/Frontend | - |
 | M6 | Theme Engine + Responsive Config | TODO | Frontend/Design | - |
@@ -29,9 +29,9 @@
 | User authentication | VERIFIED | Backend | Security/QA | M2.1 schema & M2.2 Fastify login/logout/me/session/cookies/UI (API/DB VERIFIED; Browser READY_FOR_TEST) |
 | Role management | VERIFIED | Backend/Admin | Security/QA | M2.1 schema & seed; M2.4 Role CRUD, Permission assignment matrix, System Role protection VERIFIED (TR-20260907-M2-4) |
 | Permission management | VERIFIED | Backend/Admin | Security/QA | M2.1 engine & M2.3 Fastify Scoped Authorization Guards & M2.4 Role Assignment Invariants VERIFIED (TR-20260907-M2-4) |
-| Content Type builder | TODO | Backend/Admin | QA | schema-driven |
-| Content Entry CRUD | TODO | Backend/Admin | QA | dynamic fields |
-| Category/Taxonomy | TODO | Backend/Admin | QA | reusable |
+| Content Type builder | VERIFIED | Backend/Admin | QA | M3.1 schema-driven CMS Field Schema (text, textarea, number, boolean, select), bi-directional no-shadowing, UI schema viewer, create modal (TR-20260907-M3-1) |
+| Content Entry CRUD | VERIFIED | Backend/Admin | QA | M3.1 Revision-pointer model, immutable revisions, non-destructive draft editing, optimistic concurrency, dynamic form renderer, public content resolver (TR-20260907-M3-1) |
+| Category/Taxonomy | TODO | Backend/Admin | QA | reusable (M3.2) |
 | Media Library | TODO | Backend/Admin | Security/QA | upload validation |
 | Menu Builder | TODO | Backend/Admin | QA | nested/mega ready |
 | Form Builder | TODO | Backend/Admin | Security/QA | submissions/export |

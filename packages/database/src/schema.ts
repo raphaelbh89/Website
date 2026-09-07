@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid, boolean, primaryKey, index, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, uuid, boolean, integer, jsonb, primaryKey, index, uniqueIndex } from 'drizzle-orm/pg-core';
 import { v7 } from 'uuid';
 
 export const sites = pgTable('sites', {
@@ -79,3 +79,60 @@ export const userRoleAssignments = pgTable('user_role_assignments', {
     table.scopeId
   ),
 ]);
+
+export const contentTypes = pgTable('content_types', {
+  id: uuid('id').primaryKey().$defaultFn(v7),
+  key: text('key').notNull(),
+  name: text('name').notNull(),
+  description: text('description'),
+  kind: text('kind').notNull(), // 'single' | 'collection'
+  scopeKind: text('scope_kind').notNull(), // 'global' | 'site'
+  siteId: uuid('site_id').references(() => sites.id, { onDelete: 'cascade' }),
+  schemaVersion: integer('schema_version').notNull().default(1),
+  isSystem: boolean('is_system').notNull().default(false),
+  dataSchema: jsonb('data_schema').notNull(),
+  uiSchema: jsonb('ui_schema'),
+  capabilities: jsonb('capabilities'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index('content_types_site_id_idx').on(table.siteId),
+  uniqueIndex('content_types_scope_site_key_idx').on(table.scopeKind, table.siteId, table.key),
+]);
+
+export const contentEntries = pgTable('content_entries', {
+  id: uuid('id').primaryKey().$defaultFn(v7),
+  siteId: uuid('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  contentTypeId: uuid('content_type_id').notNull().references(() => contentTypes.id, { onDelete: 'cascade' }),
+  locale: text('locale').notNull(),
+  translationGroupId: uuid('translation_group_id').notNull().$defaultFn(v7),
+  entryKind: text('entry_kind').notNull(), // 'single' | 'collection'
+  currentRevisionId: uuid('current_revision_id'),
+  publishedRevisionId: uuid('published_revision_id'),
+  publishedSlug: text('published_slug'),
+  lifecycleState: text('lifecycle_state').notNull().default('active'), // 'active' | 'archived'
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index('content_entries_site_type_locale_idx').on(table.siteId, table.contentTypeId, table.locale, table.lifecycleState),
+  uniqueIndex('content_entries_translation_locale_unique_idx').on(table.translationGroupId, table.locale),
+  uniqueIndex('content_entries_single_unique_idx').on(table.siteId, table.contentTypeId, table.locale, table.entryKind),
+  uniqueIndex('content_entries_published_slug_unique_idx').on(table.siteId, table.contentTypeId, table.locale, table.publishedSlug),
+]);
+
+export const contentEntryRevisions = pgTable('content_entry_revisions', {
+  id: uuid('id').primaryKey().$defaultFn(v7),
+  entryId: uuid('entry_id').notNull().references(() => contentEntries.id, { onDelete: 'cascade' }),
+  versionNumber: integer('version_number').notNull(),
+  schemaVersion: integer('schema_version').notNull(),
+  title: text('title').notNull(),
+  slug: text('slug'),
+  data: jsonb('data').notNull(),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('content_entry_revisions_entry_version_unique_idx').on(table.entryId, table.versionNumber),
+  index('content_entry_revisions_entry_created_idx').on(table.entryId, table.createdAt),
+]);
+

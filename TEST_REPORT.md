@@ -273,5 +273,60 @@ Browser responsive/visual verification and hosted CI have not run. PostgreSQL po
   - Reason: Browser test runner binary download unavailable in local environment; API and UI build fully verified.
 - Overall M2 Status: **READY_FOR_TEST** (pending browser runtime verification per `DEFINITION_OF_DONE.md`).
 
+---
+
+### TR-20260907-M3-1 — CMS Core Vertical Slice
+
+- Date/Time: 2026-09-07T09:40:00+07:00
+- Environment: Windows, Node 24.18.0, pnpm 11.17.0, PostgreSQL 16.14 portable (`127.0.0.1:55432`).
+- Target Branch: `main`
+- Dedicated Clean Database: `m31_clean_verify_db`
+
+**Executed checks**:
+1. ADR & Architecture Consistency:
+   - `ADR-0007` & `ADR-0008` finalized and accepted with Revision-Pointer model (`current_revision_id` vs `published_revision_id`), CMS Field Schema format, and bi-directional no-shadowing.
+2. Database Schema & Migration `0003_flaky_supernaut.sql`:
+   - `content_types`: (id, key, name, description, kind, scope_kind, site_id, schema_version, is_system, data_schema, ui_schema, capabilities, created_at, updated_at).
+   - `content_entries`: (id, site_id, content_type_id, locale, translation_group_id, entry_kind, current_revision_id, published_revision_id, published_slug, lifecycle_state, created_by, created_at, updated_at).
+   - `content_entry_revisions`: (id, entry_id, version_number, schema_version, title, slug, data, created_by, created_at).
+   - Partial unique indexes for Singleton (`WHERE entry_kind = 'single'`) and Published Slug routing (`WHERE published_slug IS NOT NULL`).
+   - Verified `pnpm db:generate` reports 0 schema drift ("No schema changes, nothing to migrate 😴").
+3. CMS Field Schema & 5 Supported Field Types:
+   - Allow-list activated: `text`, `textarea`, `number`, `boolean`, `select`.
+   - Rejection of unsupported types (`media`, `relation`, etc.) in M3.1.
+   - Evolution: `schema_version` incremented safely on non-breaking additions, breaking mutations rejected when populated entries exist.
+4. Bi-directional No-Shadowing & Concurrency Serialization:
+   - Global type creation rejected if any Site type exists with same key across platform.
+   - Site type creation rejected if any Global type exists with same key.
+   - Hashed normalized key serialization via PostgreSQL advisory transaction locks (`pg_advisory_xact_lock(hashtext(LOWER(key)))`).
+5. Revision-Pointer & Publishing Lifecycle:
+   - Non-destructive draft edits: Editing a published entry creates a new revision N+1 and updates `current_revision_id`, while `published_revision_id` and `published_slug` remain intact.
+   - Public content resolver (`GET /public/sites/:siteId/content/:typeKey/:slug`) reads ONLY `published_revision_id` when `lifecycle_state = 'active'`.
+   - Zero draft leakage, zero 404 on ongoing draft edits.
+   - Published slug conflict check returns `409 Conflict`.
+   - Singleton enforcement returns `409 Conflict` on duplicate creation.
+   - Optimistic concurrency control via `expectedRevision` returning `409 Conflict` on stale update attempts.
+6. Admin UI (`apps/admin`):
+   - `/content-types`: Schema viewer, create content type modal with 5-field schema builder, kind selector (`collection`/`single`), scope selector (`global`/`site`).
+   - `/content`: Content entries table with revision & publishing status badges, dynamic form renderer keyed by field type (`text`, `textarea`, `number`, `boolean`, `select`), edit draft, publish to live, and archive actions.
+   - Top navigation updated across all admin views.
+7. Automated Verification Pipeline:
+   - `pnpm lint`: PASS (0 errors, 0 warnings)
+   - `pnpm typecheck`: PASS (9 Turbo tasks across all packages)
+   - `pnpm test`: PASS (17 unit tests)
+   - `pnpm build`: PASS (6 Turbo tasks including `/content-types` and `/content` static prerender)
+   - `pnpm test:integration`: PASS (5 full integration suites against clean PostgreSQL 16 DB `m31_clean_verify_db`)
+   - `pnpm test:smoke`: PASS (Production Fastify readiness, unavailable DB 503, web and admin HTTP 200)
+
+**Component Status Breakdown**:
+- `M3.1 CMS Content Types & Entries APIs`: **VERIFIED**
+- `M3.1 Public Content Resolver`: **VERIFIED**
+- `M3.1 Database Schema & Migration (0003_flaky_supernaut.sql)`: **VERIFIED**
+- `M3.1 Admin UI build`: **PASS**
+- `M3.1 Browser runtime flow`: **NOT RUN / READY_FOR_TEST**
+  - Reason: Browser test runner binary download unavailable in local environment; API and UI build fully verified.
+- Milestone M3 overall status: **IN_PROGRESS** (M3.1 Core Vertical Slice: **VERIFIED**).
+
+
 
 

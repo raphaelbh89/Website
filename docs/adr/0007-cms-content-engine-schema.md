@@ -1,4 +1,4 @@
-# ADR-0007: CMS Content Engine Schema, Dynamic Fields, and Revision-Pointer Architecture
+# ADR-0007: CMS Content Engine Schema, Canonical Field Registry, and Revision-Pointer Architecture
 
 - Status: Accepted
 - Date: 2026-09-07
@@ -18,10 +18,10 @@ Hệ sinh thái nền tảng yêu cầu một CMS Content Engine mạnh mẽ, li
 ## Problem
 
 Cần thiết kế mô hình dữ liệu cho Content Type và Content Entry đáp ứng:
-1. **Schema-driven & Strongly-typed**: Dynamic fields phải được validate chặt chẽ dựa trên một allow-list các Field Type được định nghĩa tường minh.
+1. **Schema-driven & Strongly-typed**: Dynamic fields phải được validate chặt chẽ dựa trên một allow-list các Field Type được định nghĩa tường minh theo đặc tả CMS Field Schema.
 2. **Tách bạch bản nháp và bản xuất bản (Non-destructive Draft Editing)**: Việc chỉnh sửa bản nháp (Draft) tuyệt đối không được làm biến đổi, làm ẩn hoặc làm rò rỉ nội dung đang được xuất bản ngoài website công khai.
 3. **Bất biến lịch sử (Immutable Revisions)**: Mọi lần lưu/xuất bản đều phải tạo snapshot lịch sử, cho phép rollback an toàn mà không viết đè lịch sử.
-4. **Optimistic Concurrency Control**: Tránh tình trạng ghi đè mất dữ liệu (lost updates) khi nhiều biên tập viên cùng thao tác.
+4. **Optimistic Concurrency Control**: Tránh tình trạng ghi đè mất dữ liệu (lost updates) khi nhiều biên tập viên cùng thao tác (`expectedRevision` $\rightarrow$ `409 Conflict`).
 5. **Khả năng tiến hóa schema (Schema Evolution)**: Quản lý version của schema và phân định rõ ràng giữa Safe Changes và Breaking Changes.
 
 ## Constraints
@@ -43,12 +43,12 @@ Cần thiết kế mô hình dữ liệu cho Content Type và Content Entry đá
 
 ### Alternative C: Revision-Pointer Architecture (Lựa chọn)
 - **Mô tả**:
-  - Bảng `content_entries` đóng vai trò là thực thể định danh (Identity Container), lưu trữ các con trỏ: `current_revision_id` (bản nháp hiện tại) và `published_revision_id` (bản snapshot đang xuất bản).
-  - Bảng `content_entry_revisions` lưu trữ các bản ghi snapshot bất biến (Immutable Revisions) với version number tăng dần.
+  - `content_entries` đóng vai trò là thực thể định danh logic (Logical Identity Container), lưu trữ các con trỏ: `current_revision_id` (bản nháp hiện tại), `published_revision_id` (bản snapshot đang xuất bản), và `published_slug` (relational routing projection).
+  - `content_entry_revisions` lưu trữ các bản ghi snapshot bất biến (Immutable Revisions) với version number tăng dần.
 - **Ưu điểm**:
   - Tách biệt hoàn toàn bản nháp và bản xuất bản.
-  - Chỉnh sửa bản nháp chỉ cập nhật `current_revision_id` và tạo revision mới; website công khai vẫn đọc từ `published_revision_id` mà không bị gián đoạn hay rò rỉ.
-  - Xuất bản (Publish) là một thao tác nguyên tử (atomic pointer update: `published_revision_id = current_revision_id`).
+  - Chỉnh sửa bản nháp chỉ cập nhật `current_revision_id` và tạo revision mới; website công khai chỉ đọc từ `published_revision_id` mà không bị gián đoạn hay rò rỉ.
+  - Xuất bản (Publish) là một thao tác nguyên tử (atomic transaction: `published_revision_id = current_revision_id`, `published_slug = current_revision.slug`).
   - Rollback được thực hiện bằng cách tạo một revision mới sao chép từ revision cũ, bảo toàn 100% lịch sử kiểm toán.
 
 ## Decision
@@ -68,7 +68,7 @@ Table: content_types
 ├── site_id: UUID (NULLABLE, FK -> sites.id)
 ├── schema_version: INT (Default 1, tăng dần khi schema thay đổi)
 ├── is_system: BOOLEAN (Default false, bảo vệ core types)
-├── data_schema: JSONB (Định nghĩa kiểu dữ liệu & validation rules)
+├── data_schema: JSONB (CMS Field Schema định nghĩa kiểu dữ liệu & validation rules)
 ├── ui_schema: JSONB (Định nghĩa widget & layout hiển thị trong Admin)
 ├── capabilities: JSONB (Cấu hình: hasDrafts, hasRevisions, hasSlug, taxonomies)
 ├── created_at: TIMESTAMPTZ (DEFAULT NOW())
@@ -83,53 +83,48 @@ Table: content_types
 
 ### 2. Canonical Field Registry & M3.1 Phasing
 
-Để đảm bảo an toàn kiểu dữ liệu và chống injection, platform chỉ chấp nhận các field types nằm trong Allow-list:
+Hệ thống sử dụng **CMS Field Schema** với Allow-list các Field Type được định nghĩa tường minh:
 
-#### A. M3.1 Core Field Types (Ưu tiên triển khai)
-1. `text`: Chuỗi ký tự ngắn (VARCHAR, constraints: `minLength`, `maxLength`, `regexPattern`).
-2. `textarea`: Văn bản thuần nhiều dòng (TEXT, constraints: `minLength`, `maxLength`).
-3. `number`: Số nguyên / số thực (NUMERIC, constraints: `min`, `max`, `integerOnly`).
-4. `boolean`: Giá trị true/false (BOOLEAN, constraints: `default: false`).
-5. `select`: Chọn 1 giá trị từ enum list (STRING, constraints: `options: [{ label, value }]`).
+#### A. M3.1 Core Field Types (Kích hoạt chính thức)
+1. `text`: Chuỗi ký tự ngắn (VARCHAR, constraints: `required`, `minLength`, `maxLength`, `default`).
+2. `textarea`: Văn bản thuần nhiều dòng (TEXT, constraints: `required`, `minLength`, `maxLength`, `default`).
+3. `number`: Số nguyên / số thực (NUMERIC, constraints: `required`, `min`, `max`, `integerOnly`, `default`).
+4. `boolean`: Giá trị true/false (BOOLEAN, constraints: `required`, `default`).
+5. `select`: Chọn 1 giá trị từ enum list (STRING, constraints: `required`, `options: [{ label, value }]`, `default`).
 
-#### B. Reserved & Deferred Field Types (Trì hoãn sang các milestone chuyên biệt)
-- `media`: Trì hoãn tới **M4 (Media Library)** để lưu trữ asset ID có kiểm soát quota/MIME thay vì URL tự do.
-- `relation`: Trì hoãn tới khi thiết kế bảng quan hệ N-N quan hệ toàn vẹn (`content_entry_relations`), không lưu foreign UUID dangling trong JSONB.
-- `richtext`: Trì hoãn tới khi chốt canonical JSON AST format (vd: TipTap/ProseMirror document JSON) và sanitization engine an toàn để chống XSS.
-- `repeater`: Trì hoãn tới M3.2/M5 để kiểm soát độ phức tạp lồng nhau.
-- `multiSelect`, `date`, `datetime`, `url`, `email`, `color`: Được chuẩn hóa trong schema spec và sẽ kích hoạt sau khi core engine M3.1 chạy ổn định.
+> **Lưu ý về Validation trong M3.1**: Không hỗ trợ arbitrary custom `regexPattern` trong M3.1 để tránh ReDoS và rủi ro native JavaScript RegExp timeout. Tất cả các field definitions phải được validate chặt chẽ (reject unknown field types, duplicate keys, unsupported properties).
 
-#### C. ReDoS Mitigation Policy
-Nếu Admin cung cấp `regexPattern` cho field `text`:
-- Giới hạn độ dài pattern: `maxLength = 100` ký tự.
-- Chặn các cấu trúc nested quantifier nguy hiểm gây catastrophic backtracking (vd: `(a+)+$`).
-- Thực thi timeout (<= 50ms) trong quá trình validate.
+#### B. Reserved & Deferred Field Types
+- `media`: Trì hoãn tới **M4 (Media Library)** để quản lý asset ID, MIME type, quota.
+- `relation`: Trì hoãn tới khi triển khai bảng quan hệ chuẩn hóa (`content_entry_relations`), không lưu foreign UUID dangling trong JSONB.
+- `richtext`: Trì hoãn tới khi chuẩn hóa canonical storage format (TipTap document JSON) và XSS sanitizer policy.
+- `repeater`: Trì hoãn tới M3.2/M5.
+- `multiSelect`, `date`, `datetime`, `url`, `email`, `color`: Được chuẩn hóa trong schema spec và sẽ kích hoạt sau khi M3.1 core engine chạy ổn định.
 
 ---
 
-### 3. Data Schema vs UI Schema Separation
+### 3. CMS Field Schema vs UI Schema
 
-Platform sử dụng **Internal CMS Field Schema** chuẩn hóa (không dùng arbitrary JSON Schema mở rộng):
-
-- **`dataSchema`:**
+- **`dataSchema` (CMS Field Schema):**
   ```json
   {
     "version": 1,
     "fields": [
       {
-        "key": "summary",
-        "label": "Tóm tắt bài viết",
-        "type": "textarea",
+        "key": "headline",
+        "label": "Tiêu đề chính",
+        "type": "text",
         "required": true,
-        "validation": { "maxLength": 500 },
+        "minLength": 1,
+        "maxLength": 200,
         "default": ""
       },
       {
-        "key": "priority",
-        "label": "Độ ưu tiên",
+        "key": "views",
+        "label": "Lượt xem",
         "type": "number",
         "required": false,
-        "validation": { "min": 0, "max": 100 },
+        "min": 0,
         "default": 0
       }
     ]
@@ -141,18 +136,11 @@ Platform sử dụng **Internal CMS Field Schema** chuẩn hóa (không dùng ar
     "version": 1,
     "elements": [
       {
-        "fieldKey": "summary",
-        "widget": "textarea",
-        "placeholder": "Nhập tóm tắt ngắn cho bài viết...",
-        "helpText": "Hiển thị ở card xem trước ngoài trang chủ",
+        "fieldKey": "headline",
+        "widget": "text_input",
+        "placeholder": "Nhập tiêu đề...",
         "colSpan": 12,
         "group": "General"
-      },
-      {
-        "fieldKey": "priority",
-        "widget": "number_input",
-        "colSpan": 6,
-        "group": "Settings"
       }
     ]
   }
@@ -162,7 +150,7 @@ Platform sử dụng **Internal CMS Field Schema** chuẩn hóa (không dùng ar
 
 ### 4. Revision-Pointer Content Entry Model
 
-#### A. Table `content_entries` (Identity Container)
+#### A. Table `content_entries` (Logical Identity Container)
 ```text
 Table: content_entries
 ├── id: UUIDv7 (PK)
@@ -170,11 +158,12 @@ Table: content_entries
 ├── content_type_id: UUID (FK -> content_types.id, NOT NULL)
 ├── locale: VARCHAR(10) (NOT NULL, vd: "vi", "en")
 ├── translation_group_id: UUID (NOT NULL, gom nhóm bản dịch)
-├── current_revision_id: UUID (NULLABLE, FK -> content_entry_revisions.id)
-├── published_revision_id: UUID (NULLABLE, FK -> content_entry_revisions.id)
-├── status: VARCHAR(20) ("draft" | "published" | "archived", NOT NULL, DEFAULT "draft")
+├── entry_kind: VARCHAR(20) ("single" | "collection", NOT NULL)
+├── current_revision_id: UUID (NULLABLE, trỏ revision nháp hiện tại)
+├── published_revision_id: UUID (NULLABLE, trỏ snapshot xuất bản)
+├── published_slug: VARCHAR(255) (NULLABLE, relational routing projection)
+├── lifecycle_state: VARCHAR(20) ("active" | "archived", NOT NULL, DEFAULT "active")
 ├── created_by: UUID (NULLABLE, FK -> users.id)
-├── updated_by: UUID (NULLABLE, FK -> users.id)
 ├── created_at: TIMESTAMPTZ (DEFAULT NOW())
 └── updated_at: TIMESTAMPTZ (DEFAULT NOW())
 ```
@@ -195,77 +184,81 @@ Table: content_entry_revisions
 
 **Constraints:**
 - `UNIQUE(entry_id, version_number)`
-- `published_revision_id` phải trỏ tới một revision thuộc về chính `entry_id` đó.
+- **Routing Slug Invariant**: `UNIQUE(site_id, content_type_id, locale, published_slug) WHERE published_slug IS NOT NULL`.
+- **Singleton Invariant**: `UNIQUE(site_id, content_type_id, locale) WHERE entry_kind = 'single'`.
+- **Revision Ownership Integrity**: `current_revision_id` và `published_revision_id` bắt buộc phải trỏ đến các revision thuộc về chính `entry_id` đó (enforce trong domain service transaction).
 
 ---
 
-### 5. Optimistic Concurrency & Lifecycle Invariants
+### 5. Publication State Rules & Public Content Resolver
 
-#### A. Optimistic Concurrency Control
-Khi gửi request cập nhật (`PATCH /sites/:siteId/content/:typeKey/:entryId`), client bắt buộc phải gửi:
-```json
-{
-  "expectedRevision": 5,
-  "title": "New Title",
-  "data": { ... }
-}
+Trạng thái xuất bản được suy luận hoàn toàn từ các con trỏ:
+1. `published_revision_id IS NULL`: Entry chưa từng được xuất bản (Draft only).
+2. `published_revision_id == current_revision_id`: Entry đang xuất bản, không có chỉnh sửa nháp mới.
+3. `published_revision_id != current_revision_id`: Entry đang xuất bản nhưng có bản nháp mới (`current_revision_id`) đang được chỉnh sửa.
+4. `lifecycle_state == 'archived'`: Entry đã bị lưu trữ / ngừng hoạt động.
+
+**Nguyên tắc Public Resolver:**
+- Public content resolver **TUYỆT ĐỐI KHÔNG ĐỌC** `current_revision_id`.
+- Public content resolver chỉ đọc `published_revision_id` khi `lifecycle_state = 'active'` VÀ `published_revision_id IS NOT NULL`.
+- **Bằng chứng kiểm thử bắt buộc:**
+  - Published Revision 2 $\rightarrow$ Sửa nháp tạo Revision 3 $\rightarrow$ `current = 3`, `published = 2` $\rightarrow$ Public resolver VẪN TRẢ VỀ Revision 2.
+
+---
+
+### 6. Atomic Transactions
+
+#### A. Entry Create Transaction
+```text
+BEGIN
+  1. Resolve ContentType, validate site access, validate data against CMS Field Schema.
+  2. INSERT content_entries (pointers = null, entry_kind = ContentType.kind, lifecycle_state = 'active').
+  3. INSERT content_entry_revisions (entry_id = new_entry.id, version_number = 1, schema_version = ContentType.schema_version, title, slug, data).
+  4. UPDATE content_entries SET current_revision_id = revision_1.id.
+COMMIT
 ```
-- Nếu `server.current_revision.version_number !== expectedRevision`:
-  $\rightarrow$ Trả về **`409 Conflict`** (`{"error":"CONFLICT","message":"Content has been modified by another user. Current revision is 6"}`).
-- Ngăn chặn hoàn toàn việc ghi đè vô tình giữa các quản trị viên.
 
-#### B. Lifecycle State Derivation
-- **Draft Only**: `published_revision_id IS NULL` VÀ `status = 'draft'`.
-- **Published**: `published_revision_id IS NOT NULL` VÀ `status = 'published'`.
-- **Archived**: `status = 'archived'` (ngừng hiển thị công khai dù `published_revision_id` có tồn tại).
-- **Invariant**: Tuyệt đối cấm trạng thái `status = 'published'` khi `published_revision_id IS NULL`.
+#### B. Entry Update Transaction (Optimistic Concurrency)
+```text
+BEGIN
+  1. SELECT entry FOR UPDATE; compare client expectedRevision === current_revision.version_number (nếu không khớp -> 409 Conflict).
+  2. Validate payload data against latest ContentType.data_schema.
+  3. INSERT content_entry_revisions (version_number = current_revision.version_number + 1, schema_version = ContentType.schema_version, title, slug, data).
+  4. UPDATE content_entries SET current_revision_id = new_revision.id, updated_at = NOW().
+COMMIT
+```
 
-#### C. Rollback Semantics
-Khi quản trị viên yêu cầu Rollback về Revision 3 trong khi phiên bản hiện tại là Revision 8:
-- Hệ thống **KHÔNG** xóa hay sửa các Revision 4..8.
-- Hệ thống tạo một **Revision 9 mới** có nội dung `title`, `slug`, `data` được sao chép nguyên vẹn từ Revision 3.
-- Cập nhật `current_revision_id = Revision 9`.
+#### C. Entry Publish Transaction
+```text
+BEGIN
+  1. SELECT entry + current_revision FOR UPDATE; verify content.publish permission.
+  2. Verify current_revision.slug uniqueness on published_slug for site+type+locale (nếu trùng với entry khác -> 409 Conflict).
+  3. UPDATE content_entries SET published_revision_id = current_revision_id, published_slug = current_revision.slug, updated_at = NOW().
+COMMIT
+```
 
----
-
-### 6. Schema Evolution Strategy
-
-Khi quản trị viên chỉnh sửa `dataSchema` của Content Type:
-1. **Safe Mutations (Tự động chấp nhận & tăng `schema_version`):**
-   - Thêm field mới với `required: false`.
-   - Thêm field mới với `required: true` VÀ có `default` value hợp lệ.
-   - Thay đổi nhãn (`label`), `uiSchema`, thứ tự hiển thị.
-2. **Breaking Mutations (Bị từ chối nếu đã tồn tại entries):**
-   - Thêm field `required: true` mà không có giá trị `default`.
-   - Xóa field đang có dữ liệu trong entries hiện có.
-   - Thay đổi kiểu dữ liệu của field (vd: `number` $\rightarrow$ `text`).
-   - Đổi `key` của field.
-3. **Revision Schema Integrity:**
-   Mỗi revision lưu giữ `schema_version` tại thời điểm tạo, cho phép renderer và audit trail hiểu đúng cấu trúc dữ liệu lịch sử.
+#### D. Rollback Transaction
+- Tạo một Revision mới $N+1$ sao chép `title`, `slug`, `data` từ Revision mục tiêu, đặt `current_revision_id = revision_(N+1).id`. Tuyệt đối không xóa hay viết đè lịch sử.
 
 ---
 
-### 7. Queryability & Indexing Strategy
+### 7. Schema Evolution Strategy
 
-1. **Relational B-Tree Compound Indexes:**
-   ```sql
-   CREATE INDEX "content_entries_site_type_locale_idx" 
-   ON "content_entries" ("site_id", "content_type_id", "locale", "status");
-   ```
-2. **GIN Path Ops Index trên JSONB data của Revisions:**
-   ```sql
-   CREATE INDEX "content_entry_revisions_data_gin_idx" 
-   ON "content_entry_revisions" USING gin ("data" jsonb_path_ops);
-   ```
-3. **Hard Pagination Cap:**
-   Tất cả các API query đều áp dụng giới hạn `limit <= 100` (mặc định 20) để bảo vệ bộ nhớ và database.
+- **Safe Mutations (Cho phép & tăng `schema_version`):**
+  - Thêm field mới `required: false`.
+  - Thêm field mới `required: true` kèm `default` value hợp lệ.
+  - Sửa nhãn (`label`), `uiSchema`, thứ tự hiển thị.
+- **Breaking Mutations (Từ chối nếu đã có entries tồn tại):**
+  - Thêm field `required: true` mà không có giá trị `default`.
+  - Xóa field đang có dữ liệu trong entries.
+  - Thay đổi kiểu dữ liệu của field.
+  - Đổi `key` của field.
 
 ## Consequences
 
 - **Tích cực**:
-  - Dữ liệu xuất bản công khai tuyệt đối an toàn và độc lập với quá trình soạn thảo nháp.
-  - Lịch sử thay đổi minh bạch 100%, hỗ trợ audit và rollback hoàn hảo.
-  - Phù hợp với Module Registry và AI Website Factory.
+  - Dữ liệu xuất bản công khai an toàn 100%, không bị ảnh hưởng bởi bản nháp đang chỉnh sửa.
+  - Tránh lost updates qua Optimistic Concurrency Control.
+  - Snapshot bất biến phục vụ audit và rollback hoàn hảo.
 - **Tiêu cực / Trade-offs**:
-  - Tốn thêm dung lượng lưu trữ cho các bản ghi revisions (chấp nhận được vì dữ liệu văn bản JSONB nhỏ, có thể prune old revisions định kỳ ở M9).
-  - Thao tác ghi đòi hỏi transaction quản lý cả `content_entries` và `content_entry_revisions`.
+  - Tốn thêm dung lượng lưu trữ cho bảng `content_entry_revisions` (có thể thiết lập chính sách lưu trữ / dọn dẹp ở M9).

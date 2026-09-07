@@ -269,6 +269,45 @@ No production/service installation; .local-postgres artifacts kept and ignored.
 - M3 status: `ARCHITECTURE_HARDENING_COMPLETED` (ADR-0007 & ADR-0008 ACCEPTED; Source Implementation NOT STARTED)
 **Next exact task:** M3.1 Minimal Vertical Slice Plan Approval.
 
+---
+
+## 2026-09-07 09:42 — M3.1 CMS Core Vertical Slice Implemented & Verified
+
+**Agent/Role:** Backend / Admin / Security
+**Task:** Triển khai hoàn tất Milestone M3.1 CMS Core Vertical Slice (Content Types, CMS Field Schema validation, Bi-directional No-Shadowing với advisory locks, Revision-Pointer Architecture, Singletons, Published Slug routing, Optimistic Concurrency `expectedRevision`, Non-destructive draft edits, Public Content Resolver, Admin UI `/content-types` và `/content`, và 5th Integration Test Suite trên clean PostgreSQL 16 DB).
+
+**Files changed / created:**
+- `docs/adr/0007-cms-content-engine-schema.md`: Cập nhật Revision-Pointer Model (`current_revision_id` vs `published_revision_id`), Allow-list 5 field types (`text`, `textarea`, `number`, `boolean`, `select`), Optimistic Concurrency (`expectedRevision` -> 409), Schema Evolution (`schema_version`).
+- `docs/adr/0008-content-scoping-and-routing.md`: Cập nhật Bi-directional No-Shadowing, PostgreSQL advisory transaction locks, Singleton partial unique index (`WHERE entry_kind = 'single'`), Published Slug unique routing projection (`WHERE published_slug IS NOT NULL`).
+- `packages/database/src/schema.ts`: Thêm `contentTypes`, `contentEntries`, `contentEntryRevisions` tables và indexes.
+- `packages/database/src/index.ts`: Export M3 tables và seed permissions `content_types.read`, `content_types.manage`.
+- `packages/database/drizzle/0003_flaky_supernaut.sql` (NEW): Generated migration cho M3.1 tables và custom partial unique indexes.
+- `packages/database/src/reset-test-db.ts` (NEW) & `packages/database/package.json`: Helper script `reset-db` hỗ trợ test độc lập trên PostgreSQL 16.
+- `apps/api/src/content.service.ts` (NEW): Domain service xử lý Content Types (bi-directional no-shadowing + advisory locks, schema validation, safe vs breaking mutation check) và Content Entries (revision-pointer create/update/publish/archive, optimistic concurrency check, slug conflict check, public resolver).
+- `apps/api/src/app.ts`: Đăng ký tất cả M3.1 Content Types, Content Entries, và Public Resolver REST endpoints.
+- `apps/admin/app/content-types/page.tsx` (NEW): Admin Content Types list, schema viewer, và create modal với 5-field schema builder.
+- `apps/admin/app/content/page.tsx` (NEW): Admin Content Entries list, status badges, và Dynamic Form Renderer theo FIELD TYPE.
+- `apps/admin/app/page.tsx`, `apps/admin/app/users/page.tsx`, `apps/admin/app/roles/page.tsx`: Cập nhật top nav liên kết `/content-types` và `/content`.
+- `packages/database/src/database.integration.test.ts`: Bổ sung test suite thứ 5 kiểm thử toàn diện mọi acceptance criteria của M3.1.
+
+**Commands:**
+- `pnpm lint` -> PASS (0 errors, 0 warnings)
+- `pnpm typecheck` -> PASS (9 Turbo tasks across all packages)
+- `pnpm test` -> PASS (17 unit tests across 3 suites)
+- `pnpm build` -> PASS (6 Turbo tasks including `/content-types` and `/content` static prerender)
+- `pnpm test:integration` -> PASS (5 full integration suites on dedicated clean PostgreSQL 16 DB `m31_clean_verify_db`)
+- `pnpm test:smoke` -> PASS (Production Fastify readiness, unavailable DB 503, web and admin HTTP 200)
+- `pnpm db:generate` -> PASS ("No schema changes, nothing to migrate 😴")
+
+**Resulting status:**
+- M3.1 Backend & Public Content Resolver: `VERIFIED`
+- M3.1 Database Schema & Invariants (0003_flaky_supernaut.sql): `VERIFIED`
+- M3.1 Admin UI build: `PASS`
+- M3.1 Browser runtime: `NOT RUN / READY_FOR_TEST`
+- Milestone M3 overall status: `IN_PROGRESS` (M3.1 Core Slice: `VERIFIED`)
+**Next exact task:** M3.2 Taxonomy & Advanced Content Engine or M4 Media Library checkpoint.
+
+
 
 
 

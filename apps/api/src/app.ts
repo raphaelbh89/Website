@@ -6,6 +6,7 @@ import { getSessionCookieName, normalizeEmail } from '@platform/auth';
 import type { createDatabase } from '@platform/database';
 import { AuthService, type AuthenticatedUserSession } from './auth.service.js';
 import { AdminService } from './admin.service.js';
+import { ContentService } from './content.service.js';
 import { extractSessionToken, requireAuthentication, requirePermission } from './auth.guard.js';
 
 export interface AppOptions {
@@ -49,6 +50,7 @@ export function buildApp(
 
   const authService = options.database ? new AuthService(options.database) : null;
   const adminService = options.database ? new AdminService(options.database) : null;
+  const contentService = options.database ? new ContentService(options.database) : null;
 
   // 1. Register Fastify Cookie Plugin
   void app.register(cookie, {
@@ -616,6 +618,304 @@ export function buildApp(
       return { status: 'ok' };
     }
   );
+
+  // ---------------------------------------------------------------------------
+  // 11. M3.1 CMS Content Type Management Endpoints
+  // ---------------------------------------------------------------------------
+
+  app.get(
+    '/content-types',
+    {
+      preHandler: [
+        requirePermission(authService, cookieName, 'content_types.read', (req) => {
+          const query = req.query as { siteId?: string };
+          return query?.siteId ? { kind: 'site', siteId: query.siteId } : { kind: 'global' };
+        }),
+      ],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!contentService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const query = request.query as { scopeKind?: 'global' | 'site'; siteId?: string };
+      const res = await contentService.listContentTypes(query);
+      return res;
+    }
+  );
+
+  app.post(
+    '/content-types',
+    {
+      preHandler: [
+        requirePermission(authService, cookieName, 'content_types.manage', (req) => {
+          const body = req.body as { scopeKind?: 'global' | 'site'; siteId?: string | null };
+          return body?.scopeKind === 'site' && body?.siteId
+            ? { kind: 'site', siteId: body.siteId }
+            : { kind: 'global' };
+        }),
+      ],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!contentService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+
+      const body = request.body as Record<string, unknown> | undefined;
+      if (!body || !body.key || !body.name || !body.kind || !body.scopeKind || !body.dataSchema) {
+        return reply.code(400).send({
+          error: 'BAD_REQUEST',
+          message: 'Missing required fields: key, name, kind, scopeKind, dataSchema',
+        });
+      }
+
+      const res = await contentService.createContentType(body as Parameters<typeof contentService.createContentType>[0]);
+      if (res.error) {
+        const statusCode = res.status ?? 400;
+        const errType = statusCode === 409 ? 'CONFLICT' : statusCode === 404 ? 'NOT_FOUND' : 'BAD_REQUEST';
+        return reply.code(statusCode).send({ error: errType, message: res.error });
+      }
+
+      return reply.code(201).send(res);
+    }
+  );
+
+  app.get(
+    '/content-types/:id',
+    {
+      preHandler: [
+        requirePermission(authService, cookieName, 'content_types.read', () => ({ kind: 'global' })),
+      ],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!contentService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const { id } = request.params as { id: string };
+      const res = await contentService.getContentType(id);
+      if (res.error) {
+        return reply.code(res.status ?? 404).send({ error: 'NOT_FOUND', message: res.error });
+      }
+      return res;
+    }
+  );
+
+  app.patch(
+    '/content-types/:id',
+    {
+      preHandler: [
+        requirePermission(authService, cookieName, 'content_types.manage', () => ({ kind: 'global' })),
+      ],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!contentService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const { id } = request.params as { id: string };
+      const body = (request.body || {}) as Record<string, unknown>;
+      const res = await contentService.updateContentType(id, body as Parameters<typeof contentService.updateContentType>[1]);
+      if (res.error) {
+        const statusCode = res.status ?? 400;
+        const errType = statusCode === 404 ? 'NOT_FOUND' : 'BAD_REQUEST';
+        return reply.code(statusCode).send({ error: errType, message: res.error });
+      }
+      return res;
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // 12. M3.1 CMS Content Entry Management Endpoints (SITE Scoped)
+  // ---------------------------------------------------------------------------
+
+  app.get(
+    '/sites/:siteId/content/:typeKey',
+    {
+      preHandler: [
+        requirePermission(authService, cookieName, 'content.read', (req) => ({
+          kind: 'site',
+          siteId: (req.params as { siteId: string }).siteId,
+        })),
+      ],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!contentService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const { siteId, typeKey } = request.params as { siteId: string; typeKey: string };
+      const query = (request.query || {}) as Record<string, unknown>;
+      const res = await contentService.listContentEntries(siteId, typeKey, query as Parameters<typeof contentService.listContentEntries>[2]);
+      return res;
+    }
+  );
+
+  app.post(
+    '/sites/:siteId/content/:typeKey',
+    {
+      preHandler: [
+        requirePermission(authService, cookieName, 'content.create', (req) => ({
+          kind: 'site',
+          siteId: (req.params as { siteId: string }).siteId,
+        })),
+      ],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!contentService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const { siteId, typeKey } = request.params as { siteId: string; typeKey: string };
+      const body = request.body as Record<string, unknown> | undefined;
+      if (!body || !body.title) {
+        return reply.code(400).send({ error: 'BAD_REQUEST', message: 'Title is required' });
+      }
+
+      const res = await contentService.createContentEntry(
+        siteId,
+        typeKey,
+        body as Parameters<typeof contentService.createContentEntry>[2],
+        request.authSession?.user?.id
+      );
+
+      if (res.error) {
+        const statusCode = res.status ?? 400;
+        const errType = statusCode === 409 ? 'CONFLICT' : statusCode === 404 ? 'NOT_FOUND' : 'BAD_REQUEST';
+        return reply.code(statusCode).send({ error: errType, message: res.error });
+      }
+
+      return reply.code(201).send(res);
+    }
+  );
+
+  app.get(
+    '/sites/:siteId/content/:typeKey/:entryId',
+    {
+      preHandler: [
+        requirePermission(authService, cookieName, 'content.read', (req) => ({
+          kind: 'site',
+          siteId: (req.params as { siteId: string }).siteId,
+        })),
+      ],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!contentService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const { siteId, typeKey, entryId } = request.params as { siteId: string; typeKey: string; entryId: string };
+      const res = await contentService.getContentEntry(siteId, typeKey, entryId);
+      if (res.error) {
+        return reply.code(res.status ?? 404).send({ error: 'NOT_FOUND', message: res.error });
+      }
+      return res;
+    }
+  );
+
+  app.patch(
+    '/sites/:siteId/content/:typeKey/:entryId',
+    {
+      preHandler: [
+        requirePermission(authService, cookieName, 'content.update', (req) => ({
+          kind: 'site',
+          siteId: (req.params as { siteId: string }).siteId,
+        })),
+      ],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!contentService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const { siteId, typeKey, entryId } = request.params as { siteId: string; typeKey: string; entryId: string };
+      const body = (request.body || {}) as Record<string, unknown>;
+      const res = await contentService.updateContentEntry(
+        siteId,
+        typeKey,
+        entryId,
+        body as Parameters<typeof contentService.updateContentEntry>[3],
+        request.authSession?.user?.id
+      );
+
+      if (res.error) {
+        const statusCode = res.status ?? 400;
+        const errType = statusCode === 409 ? 'CONFLICT' : statusCode === 404 ? 'NOT_FOUND' : 'BAD_REQUEST';
+        return reply.code(statusCode).send({ error: errType, message: res.error });
+      }
+
+      return res;
+    }
+  );
+
+  app.post(
+    '/sites/:siteId/content/:typeKey/:entryId/archive',
+    {
+      preHandler: [
+        requirePermission(authService, cookieName, 'content.delete', (req) => ({
+          kind: 'site',
+          siteId: (req.params as { siteId: string }).siteId,
+        })),
+      ],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!contentService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const { siteId, typeKey, entryId } = request.params as { siteId: string; typeKey: string; entryId: string };
+      const res = await contentService.archiveContentEntry(siteId, typeKey, entryId);
+      if (res.error) {
+        return reply.code(res.status ?? 404).send({ error: 'NOT_FOUND', message: res.error });
+      }
+      return res;
+    }
+  );
+
+  app.post(
+    '/sites/:siteId/content/:typeKey/:entryId/publish',
+    {
+      preHandler: [
+        requirePermission(authService, cookieName, 'content.publish', (req) => ({
+          kind: 'site',
+          siteId: (req.params as { siteId: string }).siteId,
+        })),
+      ],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!contentService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const { siteId, typeKey, entryId } = request.params as { siteId: string; typeKey: string; entryId: string };
+      const res = await contentService.publishContentEntry(siteId, typeKey, entryId);
+      if (res.error) {
+        const statusCode = res.status ?? 400;
+        const errType = statusCode === 409 ? 'CONFLICT' : statusCode === 404 ? 'NOT_FOUND' : 'BAD_REQUEST';
+        return reply.code(statusCode).send({ error: errType, message: res.error });
+      }
+      return res;
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // 13. M3.1 Public Content Resolver (Unauthenticated, published only)
+  // ---------------------------------------------------------------------------
+
+  app.get('/public/sites/:siteId/content/:typeKey/:slug', async (request: FastifyRequest, reply: FastifyReply) => {
+    reply.header('Cache-Control', 'public, max-age=60');
+    if (!contentService) {
+      return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+    }
+    const { siteId, typeKey, slug } = request.params as { siteId: string; typeKey: string; slug: string };
+    const query = request.query as { locale?: string };
+    const res = await contentService.getPublicContentEntry(siteId, typeKey, slug, query?.locale || 'vi');
+    if (res.error) {
+      return reply.code(res.status ?? 404).send({ error: 'NOT_FOUND', message: res.error });
+    }
+    return res;
+  });
 
   return app;
 }

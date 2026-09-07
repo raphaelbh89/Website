@@ -75,10 +75,12 @@ export default function ProtectedAdminDashboard() {
   return (
     <main style={{ maxWidth: 760, margin: '5vh auto', padding: 24, fontFamily: 'system-ui, -apple-system, sans-serif' }}>
       {/* Navigation Header */}
-      <nav style={{ display: 'flex', gap: 16, borderBottom: '1px solid #e2e8f0', paddingBottom: 12, marginBottom: 24 }}>
-        <Link href="/" style={{ color: '#0f172a', textDecoration: 'none', fontWeight: 700, borderBottom: '2px solid #0f172a', paddingBottom: 10 }}>Dashboard</Link>
+      <nav style={{ display: 'flex', gap: 16, marginBottom: 20, borderBottom: '1px solid #e2e8f0', paddingBottom: 10 }}>
+        <Link href="/" style={{ color: '#0f172a', textDecoration: 'none', fontWeight: 600 }}>Dashboard</Link>
         <Link href="/users" style={{ color: '#64748b', textDecoration: 'none', fontWeight: 500 }}>Users</Link>
-        <Link href="/roles" style={{ color: '#64748b', textDecoration: 'none', fontWeight: 500 }}>Roles & Permissions</Link>
+        <Link href="/roles" style={{ color: '#64748b', textDecoration: 'none', fontWeight: 500 }}>Roles</Link>
+        <Link href="/content-types" style={{ color: '#64748b', textDecoration: 'none', fontWeight: 500 }}>Content Types</Link>
+        <Link href="/content" style={{ color: '#64748b', textDecoration: 'none', fontWeight: 500 }}>Content Entries</Link>
       </nav>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0', paddingBottom: 16 }}>

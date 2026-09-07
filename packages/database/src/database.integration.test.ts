@@ -1143,3 +1143,540 @@ it('verifies M2.4 Admin User Management, Role Management, Role Assignments, Inva
     await app.close();
   }
 }, 30000);
+
+it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional No-Shadowing, Revision-Pointer Lifecycle, Singletons, Optimistic Concurrency, and Public Content Resolver against PostgreSQL 16', async () => {
+  const isProduction = true;
+  const cookieName = getSessionCookieName(isProduction);
+
+  const app = buildApp({
+    checkDatabase: async () => {},
+    database,
+    nodeEnv: 'production',
+    cookieSecret: 'test-production-cookie-secret-min-32-characters!',
+  });
+
+  try {
+    const password = 'TestAdminPassword123!';
+    const passwordHash = await hashPassword(password);
+
+    // 1. Setup Admin user with system_super_admin role
+    const [m3Admin] = await database.db
+      .insert(users)
+      .values({
+        email: 'm3_admin@example.com',
+        name: 'M3 Super Admin',
+        passwordHash,
+        isActive: true,
+      })
+      .returning();
+
+    const superAdminRole = await database.db.query.roles.findFirst({
+      where: (r, { eq: eqOp }) => eqOp(r.key, 'system_super_admin'),
+    });
+    expect(superAdminRole).toBeDefined();
+
+    await database.db.insert(userRoleAssignments).values({
+      userId: m3Admin.id,
+      roleId: superAdminRole!.id,
+      scopeKind: 'global',
+      scopeId: null,
+    });
+
+    const adminLoginRes = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: { 'content-type': 'application/json' },
+      payload: { email: 'm3_admin@example.com', password },
+    });
+    expect(adminLoginRes.statusCode).toBe(200);
+    const adminToken = adminLoginRes.json().token;
+    const adminCookies = { [cookieName]: adminToken };
+
+    // Setup Site A and Site B
+    const [siteA] = await database.db
+      .insert(sites)
+      .values({ key: 'm3_site_alpha', name: 'M3 Site Alpha' })
+      .returning();
+    const [siteB] = await database.db
+      .insert(sites)
+      .values({ key: 'm3_site_beta', name: 'M3 Site Beta' })
+      .returning();
+
+    // --- A. Content Type Management & No-Shadowing Tests ---
+
+    // 1. Create Global Content Type "m3_article" (collection)
+    const createGlobalRes = await app.inject({
+      method: 'POST',
+      url: '/content-types',
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        key: 'm3_article',
+        name: 'M3 Articles',
+        kind: 'collection',
+        scopeKind: 'global',
+        dataSchema: {
+          version: 1,
+          fields: [
+            { key: 'headline', label: 'Headline', type: 'text', required: true, minLength: 2 },
+            { key: 'summary', label: 'Summary', type: 'textarea', required: false },
+            { key: 'read_time', label: 'Read Time (minutes)', type: 'number', required: false, min: 1 },
+            { key: 'is_featured', label: 'Featured', type: 'boolean', required: false, default: false },
+            {
+              key: 'category',
+              label: 'Category',
+              type: 'select',
+              required: true,
+              options: [
+                { label: 'News', value: 'news' },
+                { label: 'Blog', value: 'blog' },
+              ],
+            },
+          ],
+        },
+      },
+    });
+    expect(createGlobalRes.statusCode).toBe(201);
+    const globalType = createGlobalRes.json().contentType;
+    expect(globalType.key).toBe('m3_article');
+    expect(globalType.scope_kind).toBe('global');
+    expect(globalType.schema_version).toBe(1);
+
+    // 2. Create Site-specific Content Type "m3_doctor" on Site A
+    const createSiteTypeRes = await app.inject({
+      method: 'POST',
+      url: '/content-types',
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        key: 'm3_doctor',
+        name: 'Doctor Profiles',
+        kind: 'collection',
+        scopeKind: 'site',
+        siteId: siteA.id,
+        dataSchema: {
+          version: 1,
+          fields: [
+            { key: 'full_name', label: 'Full Name', type: 'text', required: true },
+            { key: 'years_experience', label: 'Years Experience', type: 'number', required: false },
+          ],
+        },
+      },
+    });
+    expect(createSiteTypeRes.statusCode).toBe(201);
+    const siteType = createSiteTypeRes.json().contentType;
+    expect(siteType.key).toBe('m3_doctor');
+    expect(siteType.scope_kind).toBe('site');
+    expect(siteType.site_id).toBe(siteA.id);
+
+    // 3. Create Singleton Content Type "m3_site_hero" (single)
+    const createSingleTypeRes = await app.inject({
+      method: 'POST',
+      url: '/content-types',
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        key: 'm3_site_hero',
+        name: 'Homepage Hero Config',
+        kind: 'single',
+        scopeKind: 'global',
+        dataSchema: {
+          version: 1,
+          fields: [
+            { key: 'tagline', label: 'Tagline', type: 'text', required: true },
+            { key: 'cta_text', label: 'Call to Action', type: 'text', required: false, default: 'Explore' },
+          ],
+        },
+      },
+    });
+    expect(createSingleTypeRes.statusCode).toBe(201);
+    const singleType = createSingleTypeRes.json().contentType;
+    expect(singleType.kind).toBe('single');
+
+    // 4. No-Shadowing Direction 1 (Site shadows Global): Attempt to create Site type "m3_article" -> 409 Conflict
+    const shadowGlobalRes = await app.inject({
+      method: 'POST',
+      url: '/content-types',
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        key: 'm3_article',
+        name: 'Duplicate Site Article',
+        kind: 'collection',
+        scopeKind: 'site',
+        siteId: siteA.id,
+        dataSchema: { version: 1, fields: [{ key: 'x', label: 'X', type: 'text' }] },
+      },
+    });
+    expect(shadowGlobalRes.statusCode).toBe(409);
+    expect(shadowGlobalRes.json().message).toContain('shadows an existing global content type');
+
+    // 5. No-Shadowing Direction 2 (Global conflicts with Site): Attempt to create Global type "m3_doctor" -> 409 Conflict
+    const shadowSiteRes = await app.inject({
+      method: 'POST',
+      url: '/content-types',
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        key: 'm3_doctor',
+        name: 'Global Doctor',
+        kind: 'collection',
+        scopeKind: 'global',
+        dataSchema: { version: 1, fields: [{ key: 'x', label: 'X', type: 'text' }] },
+      },
+    });
+    expect(shadowSiteRes.statusCode).toBe(409);
+    expect(shadowSiteRes.json().message).toContain('already exists or conflicts with an existing site-specific content type');
+
+    // 6. Unsupported Field Type Rejection: type "media" or "unknown" in M3.1 -> 400 Bad Request
+    const unsupportedFieldRes = await app.inject({
+      method: 'POST',
+      url: '/content-types',
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        key: 'm3_unsupported',
+        name: 'Unsupported Type',
+        kind: 'collection',
+        scopeKind: 'global',
+        dataSchema: {
+          version: 1,
+          fields: [{ key: 'img', label: 'Image', type: 'media' }], // media deferred to M4!
+        },
+      },
+    });
+    expect(unsupportedFieldRes.statusCode).toBe(400);
+    expect(unsupportedFieldRes.json().message).toContain('Unsupported field type "media"');
+
+    // 7. Safe Schema Mutation: Add optional field "author_note" -> Increments schema_version to 2
+    const safeMutationRes = await app.inject({
+      method: 'PATCH',
+      url: `/content-types/${globalType.id}`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        dataSchema: {
+          version: 1,
+          fields: [
+            ...globalType.data_schema.fields,
+            { key: 'author_note', label: 'Author Note', type: 'text', required: false, default: '' },
+          ],
+        },
+      },
+    });
+    expect(safeMutationRes.statusCode).toBe(200);
+    expect(safeMutationRes.json().contentType.schemaVersion).toBe(2);
+
+    // --- B. Content Entry & Revision-Pointer Lifecycle Tests ---
+
+    // 1. Create Entry on Site A (Collection type m3_article) -> creates Revision 1
+    const createEntryRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA.id}/content/m3_article`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Alpha Article 1',
+        slug: 'alpha-article-1',
+        locale: 'vi',
+        data: {
+          headline: 'Breaking News 1',
+          summary: 'Brief summary of alpha article 1',
+          read_time: 5,
+          is_featured: true,
+          category: 'news',
+        },
+      },
+    });
+    expect(createEntryRes.statusCode).toBe(201);
+    const entryData = createEntryRes.json();
+    const entryId = entryData.entry.id;
+    const rev1Id = entryData.revision.id;
+    expect(entryData.entry.current_revision_id).toBe(rev1Id);
+    expect(entryData.entry.published_revision_id).toBeNull();
+    expect(entryData.revision.version_number).toBe(1);
+    expect(entryData.revision.data.headline).toBe('Breaking News 1');
+
+    // 2. Update Entry (Edit Draft) -> creates Revision 2
+    const updateEntryRes = await app.inject({
+      method: 'PATCH',
+      url: `/sites/${siteA.id}/content/m3_article/${entryId}`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        expectedRevision: 1,
+        title: 'Alpha Article 1 (Updated)',
+        data: {
+          headline: 'Breaking News 1 (Updated Revision)',
+          read_time: 7,
+        },
+      },
+    });
+    expect(updateEntryRes.statusCode).toBe(200);
+    const updatedEntryData = updateEntryRes.json();
+    const rev2Id = updatedEntryData.revision.id;
+    expect(updatedEntryData.entry.current_revision_id).toBe(rev2Id);
+    expect(updatedEntryData.entry.published_revision_id).toBeNull(); // Still unpublished!
+    expect(updatedEntryData.revision.version_number).toBe(2);
+    expect(updatedEntryData.revision.data.headline).toBe('Breaking News 1 (Updated Revision)');
+    expect(updatedEntryData.revision.data.read_time).toBe(7);
+
+    // Verify Revision 1 in DB remains immutable and unchanged
+    const rev1Db = await database.db.query.contentEntryRevisions.findFirst({
+      where: (r, { eq: eqOp }) => eqOp(r.id, rev1Id),
+    });
+    expect(rev1Db?.versionNumber).toBe(1);
+    const rev1Data = rev1Db?.data as Record<string, unknown> | undefined;
+    expect(rev1Data?.headline).toBe('Breaking News 1');
+    expect(rev1Data?.read_time).toBe(5);
+
+    // 3. Optimistic Concurrency Test: Submitting PATCH with stale expectedRevision (1 when current is 2) -> 409 Conflict
+    const staleConcurrencyRes = await app.inject({
+      method: 'PATCH',
+      url: `/sites/${siteA.id}/content/m3_article/${entryId}`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        expectedRevision: 1, // Stale!
+        title: 'Stale Lost Update Attempt',
+        data: { headline: 'Lost Update' },
+      },
+    });
+    expect(staleConcurrencyRes.statusCode).toBe(409);
+    expect(staleConcurrencyRes.json().message).toContain('Optimistic concurrency conflict');
+
+    // 4. Singleton Invariant Test: Create single entry for "m3_site_hero" on Site A
+    const createSingleEntryRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA.id}/content/m3_site_hero`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Site A Hero Config',
+        locale: 'vi',
+        data: { tagline: 'Welcome to Alpha', cta_text: 'Start Now' },
+      },
+    });
+    expect(createSingleEntryRes.statusCode).toBe(201);
+    expect(createSingleEntryRes.json().entry.entry_kind).toBe('single');
+
+    // Attempting to create a SECOND entry for "m3_site_hero" on Site A (same locale 'vi') -> 409 Conflict!
+    const duplicateSingleRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA.id}/content/m3_site_hero`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Duplicate Hero Attempt',
+        locale: 'vi',
+        data: { tagline: 'Illegal Duplicate' },
+      },
+    });
+    expect(duplicateSingleRes.statusCode).toBe(409);
+    expect(duplicateSingleRes.json().message).toContain('A single content entry already exists for this site and locale');
+
+    // --- C. Publishing & Public Content Resolver Verification ---
+
+    // 1. Public Resolver before publish -> 404 Not Found
+    const publicBeforePublishRes = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA.id}/content/m3_article/alpha-article-1?locale=vi`,
+    });
+    expect(publicBeforePublishRes.statusCode).toBe(404);
+
+    // 2. Publish Entry (Revision 2 becomes published)
+    const publishRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA.id}/content/m3_article/${entryId}/publish`,
+      cookies: adminCookies,
+    });
+    expect(publishRes.statusCode).toBe(200);
+    const publishData = publishRes.json();
+    expect(publishData.entry.published_revision_id).toBe(rev2Id);
+    expect(publishData.entry.published_slug).toBe('alpha-article-1');
+
+    // 3. Public Resolver immediately reads Revision 2
+    const publicAfterPublishRes = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA.id}/content/m3_article/alpha-article-1?locale=vi`,
+    });
+    expect(publicAfterPublishRes.statusCode).toBe(200);
+    const pubData1 = publicAfterPublishRes.json().entry;
+    expect(pubData1.versionNumber).toBe(2);
+    expect(pubData1.data.headline).toBe('Breaking News 1 (Updated Revision)');
+
+    // 4. CRUCIAL NON-DESTRUCTIVE DRAFT EDIT TEST:
+    // Editor creates Draft Revision 3 while Revision 2 is published
+    const editDraftWhilePublishedRes = await app.inject({
+      method: 'PATCH',
+      url: `/sites/${siteA.id}/content/m3_article/${entryId}`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        expectedRevision: 2,
+        title: 'Alpha Article 1 (Draft Edit In Progress)',
+        data: {
+          headline: 'DRAFT IN PROGRESS - UNFINISHED',
+        },
+      },
+    });
+    expect(editDraftWhilePublishedRes.statusCode).toBe(200);
+    const rev3Id = editDraftWhilePublishedRes.json().revision.id;
+    expect(editDraftWhilePublishedRes.json().entry.current_revision_id).toBe(rev3Id);
+    expect(editDraftWhilePublishedRes.json().entry.published_revision_id).toBe(rev2Id);
+
+    // Public Resolver MUST STILL return Revision 2! (No draft leak, no 404!)
+    const publicDuringDraftRes = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA.id}/content/m3_article/alpha-article-1?locale=vi`,
+    });
+    expect(publicDuringDraftRes.statusCode).toBe(200);
+    const pubData2 = publicDuringDraftRes.json().entry;
+    expect(pubData2.versionNumber).toBe(2);
+    expect(pubData2.data.headline).toBe('Breaking News 1 (Updated Revision)'); // Untouched!
+
+    // 5. Publish Revision 3 -> Public Resolver now returns Revision 3
+    const publishRev3Res = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA.id}/content/m3_article/${entryId}/publish`,
+      cookies: adminCookies,
+    });
+    expect(publishRev3Res.statusCode).toBe(200);
+
+    const publicAfterPublishRev3Res = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA.id}/content/m3_article/alpha-article-1?locale=vi`,
+    });
+    expect(publicAfterPublishRev3Res.statusCode).toBe(200);
+    expect(publicAfterPublishRev3Res.json().entry.versionNumber).toBe(3);
+    expect(publicAfterPublishRev3Res.json().entry.data.headline).toBe('DRAFT IN PROGRESS - UNFINISHED');
+
+    // 6. Published Slug Conflict Test: Create Entry 2 with same slug and attempt to publish -> 409 Conflict
+    const createEntry2Res = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA.id}/content/m3_article`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Second Article',
+        slug: 'alpha-article-1', // Conflicting slug!
+        locale: 'vi',
+        data: { headline: 'Article 2', category: 'news' },
+      },
+    });
+    expect(createEntry2Res.statusCode).toBe(201);
+    const entry2Id = createEntry2Res.json().entry.id;
+
+    // Publishing entry 2 must be rejected due to slug conflict
+    const publishConflictRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA.id}/content/m3_article/${entry2Id}/publish`,
+      cookies: adminCookies,
+    });
+    expect(publishConflictRes.statusCode).toBe(409);
+    expect(publishConflictRes.json().message).toContain('is already in use by another entry');
+
+    // 7. Archive Entry Test
+    const archiveRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA.id}/content/m3_article/${entryId}/archive`,
+      cookies: adminCookies,
+    });
+    expect(archiveRes.statusCode).toBe(200);
+    expect(archiveRes.json().entry.lifecycleState).toBe('archived');
+
+    // Public resolver for archived entry returns 404
+    const publicArchivedRes = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA.id}/content/m3_article/alpha-article-1?locale=vi`,
+    });
+    expect(publicArchivedRes.statusCode).toBe(404);
+
+    // 8. Breaking Schema Mutation rejection on populated type:
+    // Attempting to remove field "headline" from "m3_article" when entries exist -> 400 Bad Request
+    const breakingMutationRes = await app.inject({
+      method: 'PATCH',
+      url: `/content-types/${globalType.id}`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        dataSchema: {
+          version: 1,
+          fields: [{ key: 'other_field', label: 'Other', type: 'text' }], // headline removed!
+        },
+      },
+    });
+    expect(breakingMutationRes.statusCode).toBe(400);
+    expect(breakingMutationRes.json().message).toContain('Breaking change rejected: field "headline" cannot be removed because content entries exist');
+
+    // --- D. Site Isolation & RBAC Verification ---
+
+    // Create a Site B Editor user
+    const [siteBUser] = await database.db
+      .insert(users)
+      .values({
+        email: 'm3_site_b_editor@example.com',
+        name: 'Site B Editor',
+        passwordHash,
+        isActive: true,
+      })
+      .returning();
+
+    const [siteEditorRole] = await database.db
+      .insert(roles)
+      .values({
+        key: 'm3_site_editor_role',
+        name: 'M3 Site Editor',
+        isSystem: false,
+      })
+      .returning();
+
+    const contentReadPerm = await database.db.query.permissions.findFirst({
+      where: (p, { eq: eqOp }) => eqOp(p.key, 'content.read'),
+    });
+    const contentCreatePerm = await database.db.query.permissions.findFirst({
+      where: (p, { eq: eqOp }) => eqOp(p.key, 'content.create'),
+    });
+
+    await database.db.insert(rolePermissions).values([
+      { roleId: siteEditorRole.id, permissionId: contentReadPerm!.id },
+      { roleId: siteEditorRole.id, permissionId: contentCreatePerm!.id },
+    ]);
+
+    // Assign role ONLY for Site B
+    await database.db.insert(userRoleAssignments).values({
+      userId: siteBUser.id,
+      roleId: siteEditorRole.id,
+      scopeKind: 'site',
+      scopeId: siteB.id,
+    });
+
+    const siteBLoginRes = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: { 'content-type': 'application/json' },
+      payload: { email: 'm3_site_b_editor@example.com', password },
+    });
+    const siteBToken = siteBLoginRes.json().token;
+    const siteBCookies = { [cookieName]: siteBToken };
+
+    // Site B editor can list content on Site B -> 200
+    const listSiteBContentRes = await app.inject({
+      method: 'GET',
+      url: `/sites/${siteB.id}/content/m3_article`,
+      cookies: siteBCookies,
+    });
+    expect(listSiteBContentRes.statusCode).toBe(200);
+
+    // Site B editor attempting to read content on Site A -> 403 Forbidden!
+    const listSiteAContentCrossRes = await app.inject({
+      method: 'GET',
+      url: `/sites/${siteA.id}/content/m3_article`,
+      cookies: siteBCookies,
+    });
+    expect(listSiteAContentCrossRes.statusCode).toBe(403);
+  } finally {
+    await app.close();
+  }
+}, 30000);
+

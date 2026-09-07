@@ -107,3 +107,56 @@ No production/service installation; .local-postgres artifacts kept and ignored.
 **Resulting status:** M1: VERIFIED.
 **Next exact step:** Tạo baseline commit `feat: establish M1 platform foundation`, push remote nếu có quyền, sau đó soạn thảo 2 ADR kiến trúc cho M2 (0005-auth-session-strategy.md và 0006-rbac-scope-strategy.md).
 
+## 2026-09-07 08:02 — Git Baseline & M2 Architecture Decisions (ADR-0005 & ADR-0006)
+
+**Agent/Role:** Lead Architect / Security / Backend
+**Task:** Thiết lập baseline commit M1 trên Git, push lên GitHub remote, và xây dựng 2 quyết định kiến trúc quan trọng cho M2: Auth/Session Strategy và Scoped RBAC Strategy.
+
+**Files changed:**
+- `docs/adr/0005-auth-session-strategy.md` (NEW): Chốt chiến lược session opaque phía server, SHA-256 token hashing trong DB, HttpOnly/Secure/SameSite=Lax cookie, mật khẩu Argon2id (`@node-rs/argon2`), login rate limiting, generic auth error, CSRF header verification.
+- `docs/adr/0006-rbac-scope-strategy.md` (NEW): Chốt kiến trúc phân quyền đa cấp độ Scoped RBAC (GLOBAL, SITE, CAMPUS, RESOURCE), phân tách User -> RoleAssignment -> Role -> RolePermission -> Permission, cơ chế allow-list tường minh, deny-by-default, đặt tên quyền `<resource>.<action>`.
+- `PROJECT_STATE.md`: Cập nhật các quyết định M2 đã chốt.
+- `PROGRESS.md`: Chuyển milestone M2 sang IN_PROGRESS.
+- `HANDOFF.md`: Cập nhật checkpoint M2.
+
+**Git Operations:**
+- Baseline commit created: `9294b50 feat: establish M1 platform foundation`.
+- Remote origin added: `https://github.com/raphaelbh89/Website.git`.
+- Git push executed: `git push -u origin main` -> PASS (Pushed to origin/main successfully).
+
+**Decisions:**
+- Không dùng JWT thuần hoặc localStorage cho admin web session.
+- Không hard-code role string `user.role = 'admin'` hay `is_super_admin` trong code.
+- Chuẩn bị bước tiếp theo: M2.1 Identity Schema & Persistence (Drizzle schema, migration, seed).
+
+**Resulting status:** M2: IN_PROGRESS (Architecture checkpoint reached).
+**Next exact step:** Thực hiện vertical slice M2.1 — Identity schema (users, sessions, roles, permissions, role_permissions, user_role_assignments).
+
+## 2026-09-07 08:08 — M2.1 Identity Schema & Persistence Completed
+
+**Agent/Role:** Backend / Security / Database
+**Task:** Triển khai lát cắt M2.1: Identity schema, Argon2id password hashing, session tokens, scoped permissions evaluation engine, database migration và integration tests.
+
+**Files changed:**
+- `packages/auth/package.json`: Thêm `@node-rs/argon2`.
+- `packages/auth/src/index.ts`: Bổ sung `hashPassword`, `verifyPassword` (Argon2id RFC 9106), `normalizeEmail`, `generateSessionToken`, `hashSessionToken` (SHA-256), `hasPermission` hỗ trợ `GLOBAL`, `SITE`, `CAMPUS`, `RESOURCE` và wildcard `*`.
+- `packages/auth/src/auth.test.ts`: Thêm unit tests cho Argon2id, tokens, email normalization và hierarchical scoped grants.
+- `packages/database/src/schema.ts`: Định nghĩa các bảng `users`, `sessions`, `roles`, `permissions`, `role_permissions`, `user_role_assignments` với UUIDv7 và foreign keys cascade.
+- `packages/database/drizzle/0001_milky_roland_deschain.sql`: Generated SQL migration file.
+- `packages/database/src/index.ts`: Export các bảng schema và bổ sung `seedDatabase` với 15 system permissions chuẩn và `system_super_admin` role.
+- `packages/database/src/database.integration.test.ts`: Test migration sạch, repeat migration, seed idempotency, FKs, UUIDv7, unique constraints, quan hệ roles/permissions, và Argon2id/token persistence trên PostgreSQL 16 thật.
+
+**Commands:**
+- `pnpm db:generate` -> PASS
+- `pnpm lint` -> PASS
+- `pnpm typecheck` -> PASS (9 tasks)
+- `pnpm test` -> PASS (9 unit tests)
+- `pnpm build` -> PASS (6 tasks)
+- `TEST_DATABASE_URL=.../m2_clean_test_db pnpm test:integration` -> PASS (tested against clean PostgreSQL 16)
+- `TEST_DATABASE_URL=.../m2_clean_test_db pnpm test:smoke` -> PASS
+
+**Resulting status:** M2.1: VERIFIED.
+**Next exact task:** M2.2 — Authentication Vertical Slice (Login API `POST /auth/login`, Logout `POST /auth/logout`, Me `GET /auth/me`, cookies/session Fastify plugin, và Admin Login UI).
+
+
+

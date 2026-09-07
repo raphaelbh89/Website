@@ -105,3 +105,41 @@ Browser responsive/visual verification and hosted CI have not run. PostgreSQL po
 - Browser visual / responsive verification: NOT RUN (M1 provides foundation placeholder screens only; no business UI).
 - Definition of Done audit: M1 foundation meets all technical criteria for M1; status updated to `VERIFIED`. (Milestone not marked `DONE` pending initial baseline commit and upstream CI verification).
 
+---
+
+### TR-20260907-M2-1 — M2.1 Identity Schema & Persistence
+
+- Date/Time: 2026-09-07T08:08:00+07:00
+- Environment: Windows, Node 24.18.0, pnpm 11.17.0, PostgreSQL 16.14 portable (`127.0.0.1:55432`).
+- Target Branch: `main`
+- Baseline Commit: `9294b50`
+
+**Executed checks**:
+1. `pnpm db:generate`: PASS, generated `packages/database/drizzle/0001_milky_roland_deschain.sql` for `users`, `sessions`, `roles`, `permissions`, `role_permissions`, `user_role_assignments`.
+2. `pnpm lint`: PASS (ESLint passed across whole monorepo with zero warnings/errors).
+3. `pnpm typecheck`: PASS (9 Turbo tasks passed across all packages/apps).
+4. `pnpm test`: PASS (3 test files, 9 unit tests passed including Argon2id hashing/verification, email normalization, high-entropy session token generation, SHA-256 token hashing, and scoped permission evaluation with global/site/campus/resource hierarchy).
+5. `pnpm build`: PASS (6 Turbo tasks passed including Next.js web/admin and Fastify API compilation).
+6. PostgreSQL integration test against fresh clean database `m2_clean_test_db`:
+   `TEST_DATABASE_URL='postgresql://platform@127.0.0.1:55432/m2_clean_test_db' pnpm test:integration`:
+   PASS:
+   - Clean PostgreSQL 16 migration + repeat migration (idempotent).
+   - Idempotent seed for sites, 15 system permissions, and `system_super_admin` role with all attached permissions.
+   - User creation with Argon2id hash (never plain text password in DB).
+   - Unique constraints on `users.email` and `sessions.token_hash`.
+   - Session creation with SHA-256 token hash (never plain token in DB).
+   - Scoped user role assignments (`global` and `site` scopes).
+   - Persistence verification across independent database connections.
+   - Foreign Key cascade delete verification (`DELETE FROM users` cleanly cascades to related sessions and role assignments).
+   - Fastify `/health/ready` verification against the migrated DB.
+7. Production smoke test:
+   `TEST_DATABASE_URL='postgresql://platform@127.0.0.1:55432/m2_clean_test_db' pnpm test:smoke`:
+   PASS (API live/ready against PostgreSQL 16, unavailable DB readiness 503, web/admin HTTP 200).
+
+**Checks NOT run / Scope limitations**:
+- Hosted CI on GitHub: NOT RUN.
+- Authentication API endpoints (`/auth/login`, `/auth/logout`, `/auth/me`): Belongs to M2.2 (NOT YET IMPLEMENTED).
+- Admin Login UI: Belongs to M2.2 (NOT YET IMPLEMENTED).
+- Status for Slice M2.1: `VERIFIED`.
+
+

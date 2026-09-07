@@ -22,6 +22,7 @@
     "uuid": "14.0.2"
   },
   "devDependencies": {
+    "@platform/auth": "workspace:*",
     "@types/pg": "8.15.6",
     "drizzle-kit": "0.31.10"
   }

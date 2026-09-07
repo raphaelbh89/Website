@@ -6,29 +6,36 @@
 
 ### Session State
 
-- Current milestone: M1 VERIFIED; independent verification tests (install, lint, typecheck, unit, build, PostgreSQL integration, production smoke) re-run and passed in this session.
-- Current active task: establishing Git baseline commit, pushing to origin if permitted, then creating M2 ADRs (0005 & 0006).
-- Working tree: Git remote `origin` set to `https://github.com/raphaelbh89/Website.git`. Ready for baseline commit.
+- Current milestone: M2 IN_PROGRESS (M2.1 Identity Schema & Persistence `VERIFIED`; ready for M2.2 Authentication Vertical Slice).
+- Working tree: Clean baseline commit `9294b50` on `origin/main`. Changes for ADRs and M2.1 staged/uncommitted.
 
 ### Completed
 
-- ADR-0004 accepted: Node 24, pnpm/Turbo, Next web/admin, Fastify API, Drizzle/PostgreSQL.
-- Workspace packages/config, database and auth contract skeleton; apps/web, admin, api.
-- Validated environment, live/ready endpoints, SQL migration, idempotent development-site seed.
-- CI workflow, frozen lockfile and documented local/production commands.
-- Independent verification rerun passed completely with real PostgreSQL 16 portable (evidence: `TEST_REPORT.md` TR-20260907-M1-RERUN).
+- Baseline commit `9294b50` pushed to GitHub remote `origin/main`.
+- ADR-0005 (Auth & Session Strategy) and ADR-0006 (Scoped RBAC Strategy) formulated and accepted.
+- Vertical slice M2.1:
+  - Added `@node-rs/argon2` to `@platform/auth`.
+  - Implemented Argon2id password hashing, verification, email normalization, high-entropy session token generation, SHA-256 token hashing, and hierarchical scoped permission evaluation (`GLOBAL`, `SITE`, `CAMPUS`, `RESOURCE`).
+  - Implemented database schema in `@platform/database`: `users`, `sessions`, `roles`, `permissions`, `role_permissions`, `user_role_assignments` using UUIDv7 primary keys and cascade foreign keys.
+  - Generated and reviewed SQL migration `0001_milky_roland_deschain.sql`.
+  - Implemented idempotent database seed for 15 system permissions and `system_super_admin` system role with zero plain text secrets committed.
+  - Verified clean migration, repeated migration, seed idempotency, unique constraints, FK cascade, and persistence with real PostgreSQL 16.
+  - Lint, typecheck (9 tasks), unit tests (9 tests), build (6 tasks), integration tests, and smoke tests all PASS.
 
 ### Not Started
 
-- M2 authentication/session, persisted roles/permission management and protected business endpoints.
-- CMS content and page rendering business flows.
-- Hosted CI execution (workflow exists; remote configured; baseline commit pending).
+- M2.2: Fastify auth endpoints (`POST /auth/login`, `POST /auth/logout`, `GET /auth/me`), cookies & session middleware, Admin Login UI.
+- M2.3: Scoped Authorization guards and permission enforcement middleware.
+- M2.4: Admin User and Role management CRUD.
+- Hosted CI execution on GitHub Actions.
 
 ### Next Recommended Actions
 
-1. Commit M1 baseline to Git (`feat: establish M1 platform foundation`) and attempt push to `origin/main`.
-2. Formulate ADR-0005 (Auth & Session Strategy) and ADR-0006 (Scoped RBAC Strategy).
-3. Deliver M2 Architecture Checkpoint report before commencing code implementation.
+1. Commit M2.1 work: `feat(database,auth): implement identity schema, argon2id hashing and scoped rbac persistence`.
+2. Begin vertical slice M2.2:
+   - Add `@fastify/cookie`, `@fastify/cors`, `@fastify/rate-limit` to `apps/api`.
+   - Implement authentication service (verify credentials, create session, set HttpOnly cookie, retrieve me).
+   - Implement Next.js Admin login page and auth state provider.
 
 ### Files changed / commands / limitations
 

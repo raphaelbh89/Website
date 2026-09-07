@@ -11,8 +11,8 @@
 
 | ID | Severity | Status | Area | Description | Owner |
 |---|---|---|---|---|---|
-| ARCH-001 | S2 | IN_PROGRESS | Architecture | Framework/ORM pinned in ADR-0004; auth/session selection remains for M2 | Architect |
-| ARCH-002 | S2 | OPEN | RBAC | Cần quyết định permission scope: global/site/campus/resource | Architect/Security |
+| ARCH-001 | S2 | RESOLVED | Architecture | Framework/ORM pinned in ADR-0004; Auth/Session strategy finalized and accepted in ADR-0005 | Architect/Security |
+| ARCH-002 | S2 | RESOLVED | RBAC | Permission scope strategy finalized (GLOBAL/SITE/CAMPUS/RESOURCE) and accepted in ADR-0006 | Architect/Security |
 | ARCH-003 | S2 | OPEN | Page Builder | Cần giới hạn dynamic schema để tránh config trở thành untyped JSON dump | Architect |
 | ENV-M1-001 | S2 | RESOLVED | QA environment | Resolved locally via portable PostgreSQL 16 on 127.0.0.1:55432; independent verification rerun passed; see TR-20260907-M1-RERUN | Orchestrator/QA |
 

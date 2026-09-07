@@ -4,8 +4,8 @@
 
 ## Project Status
 
-- Stage: `FOUNDATION_VERIFIED` (M1 implementation and independent verification passed; baseline commit being established; no business CMS/auth feature implemented yet).
-- Source implementation: M1 source exists and all verification checks pass (frozen install, lint, typecheck, unit, build, PostgreSQL 16 migration/seed integration, smoke). Hosted CI execution pending.
+- Stage: `M2_IN_PROGRESS` (M1 foundation `VERIFIED` with baseline commit `9294b50` pushed to `origin/main`; M2 Auth + RBAC vertical slice M2.1 Identity Schema & Persistence is active).
+- Source implementation: M1 foundation verified; ADR-0005 (Auth/Session) and ADR-0006 (Scoped RBAC) accepted; executing M2.1 identity schema, Argon2id, and database migrations.
 - Target architecture: `Modular Monolith / Monorepo`
 - Multi-Agent workflow: `DEFINED`
 
@@ -18,7 +18,7 @@
 - TypeScript-first
 - Node.js 24 / pnpm 11.17.0 / Turborepo 2.10.12 / TypeScript 5.9.3 (ADR-0004).
 - Next.js 16.3.4 / React 19.2.8 for web/admin; Fastify 5.12.3 API.
-- Drizzle ORM 0.45.2 + Kit 0.31.10 / pg 8.23.0; generated SQL migration for sites.
+- Drizzle ORM 0.45.2 + Kit 0.31.10 / pg 8.23.0; generated SQL migration for sites and identity schema.
 - Vitest 4.0.18, ESLint 10.10.0; GitHub Actions verification workflow prepared.
 
 ### Apps
@@ -77,16 +77,20 @@ Content Type
 
 Multi-Agent orchestration based on persistent repo state. No dependency on a single chat session.
 
-## Decisions Not Yet Finalized
+## Decisions Finalized for M2
+
+- **ADR-0005 (Accepted)**: Server-side opaque session, `HttpOnly; Secure; SameSite=Lax` cookies, SHA-256 session token hashing in DB, Argon2id (`@node-rs/argon2`) password hashing with RFC 9106 recommended parameters, generic auth errors, rate limiting on login via `@fastify/rate-limit`, explicit CORS origin check with credentials.
+- **ADR-0006 (Accepted)**: Scoped RBAC architecture (`GLOBAL`, `SITE`, `CAMPUS`, `RESOURCE` hierarchy). Separation of User -> RoleAssignment -> Role -> RolePermission -> Permission. Implementation for M2 covers `GLOBAL` and `SITE` scopes with inheritance down to sites, explicit allow-list, deny-by-default, and structured permission names (`users.read`, `content.publish`, etc.).
+
+## Decisions Not Yet Finalized (Deferred to later milestones)
 
 Các mục sau phải tạo ADR trước khi implement nếu chưa được chốt:
 
-- auth/session library;
-- object storage provider;
-- cache provider;
+- object storage provider (M4);
+- cache provider (M9);
 - realtime/chat transport;
 - queue/background job technology;
-- visual editor library;
+- visual editor library (M5);
 - e2e test framework;
 - deployment target.
 
@@ -100,5 +104,5 @@ Các mục sau phải tạo ADR trước khi implement nếu chưa được ch�
 
 ## Next Recommended Milestone
 
-Finish independent M1 verification, then `M2 — Auth + RBAC`: auth/session ADR, permission scope ADR, schema/API/admin login vertical slice.
-M1 has a deny-by-default global/site permission function only; it does not provide authentication or wire privileged APIs.
+Complete `M2 — Auth + RBAC`: currently executing M2.1 Identity Schema & Persistence, followed by M2.2 Auth Vertical Slice, M2.3 Scoped Authorization Guards, and M2.4 Admin User/Role Management. M3 CMS Core will follow.
+

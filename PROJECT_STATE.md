@@ -4,8 +4,8 @@
 
 ## Project Status
 
-- Stage: `M2_IN_PROGRESS` (M1 foundation `VERIFIED` [commit `9294b50`]; M2.1 Identity Schema & Persistence `VERIFIED` [commit `a7b5a2d`]; M2.2 Authentication Vertical Slice `VERIFIED`).
-- Source implementation: M2.1 schema & M2.2 auth vertical slice verified (Fastify login/logout/me endpoints, server-side SHA-256 session tokens, Argon2id passwords, HttpOnly cookies, CSRF Origin protection, Admin login UI, and bootstrap CLI); M2.3 Scoped Authorization Guards next.
+- Stage: `M2_IN_PROGRESS` (M1 foundation `VERIFIED` [commit `9294b50`]; M2.1 Identity Schema & Persistence `VERIFIED` [commit `a7b5a2d`]; M2.2 Auth Vertical Slice `READY_FOR_TEST` [API/DB Verified, Browser Not Run]; M2.3 Scoped Authorization Guards `VERIFIED`).
+- Source implementation: M2.1 schema, M2.2 auth vertical slice, and M2.3 scoped authorization guards verified (Fastify `requireAuthentication` & `requirePermission`, CSRF Origin validation, session lifecycle hardening, proof routes `/admin/proof` and `/sites/:siteId/proof`); M2.4 Admin User/Role Management next.
 - Target architecture: `Modular Monolith / Monorepo`
 - Multi-Agent workflow: `DEFINED`
 
@@ -104,4 +104,4 @@ Các mục sau phải tạo ADR trước khi implement nếu chưa được ch�
 
 ## Next Recommended Milestone
  
-Complete `M2 — Auth + RBAC`: M2.1 Identity Schema & M2.2 Auth Vertical Slice are `VERIFIED`. Next task is M2.3 Scoped Authorization Guards (permission enforcement middleware/preHandler, site-scoped resolution), followed by M2.4 Admin User/Role Management. M3 CMS Core will follow.
+Complete `M2 — Auth + RBAC`: M2.1 Identity Schema, M2.2 Auth Vertical Slice, and M2.3 Scoped Authorization Guards are completed. Next task is M2.4 Admin User/Role Management (Admin API endpoints & management UI), followed by M3 CMS Core.

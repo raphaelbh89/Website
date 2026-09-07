@@ -144,44 +144,79 @@ Browser responsive/visual verification and hosted CI have not run. PostgreSQL po
 
 ---
 
-### TR-20260907-M2-2 — Authentication Vertical Slice
+### TR-20260907-M2-2 — Authentication Vertical Slice & Security Hardening
 
-- Date/Time: 2026-09-07T08:26:00+07:00
+- Date/Time: 2026-09-07T08:35:00+07:00
 - Environment: Windows, Node 24.18.0, pnpm 11.17.0, PostgreSQL 16.14 portable (`127.0.0.1:55432`).
 - Target Branch: `main`
-- Commit: `a7b5a2d` (M2.1) -> Pending commit for M2.2
+- Baseline Commit: `a7b5a2d`
 
 **Executed checks**:
-1. `pnpm lint`: PASS (ESLint passed across whole monorepo with 0 warnings/errors).
-2. `pnpm typecheck`: PASS (9 Turbo tasks passed across all 6 packages/apps).
-3. `pnpm test`: PASS (3 test suites, 12 unit tests passed including CSRF Origin verification, invalid origin rejection, missing header handling, Argon2id verification, and session token hashing).
-4. `pnpm build`: PASS (6 Turbo tasks passed, Next.js web/admin and Fastify API compiled in production mode).
-5. PostgreSQL 16 integration tests against dedicated fresh clean database `m2_clean_verify_db`:
-   `TEST_DATABASE_URL='postgresql://platform@127.0.0.1:55432/m2_clean_verify_db' pnpm test:integration`:
-   PASS (2 test suites, full verification):
-   - Admin bootstrap CLI logic (`pnpm auth:bootstrap-admin`) creating active user with Argon2id hash and assigning `system_super_admin` role.
+1. `pnpm lint`: PASS (0 errors, 0 warnings).
+2. `pnpm typecheck`: PASS (9 Turbo tasks across all packages/apps).
+3. `pnpm test`: PASS (17 unit tests across 3 suites including CSRF Origin validation, referer fallback check, non-JSON Content-Type rejection, safe GET methods, cookie naming dev vs prod, and production `COOKIE_SECRET` validation).
+4. `pnpm build`: PASS (6 Turbo tasks, Next.js web/admin and Fastify API compiled in production mode).
+5. PostgreSQL 16 integration tests against fresh database `m2_full_pipeline_db`:
+   - Admin bootstrap CLI logic (`pnpm auth:bootstrap-admin`) creating active user with Argon2id hash and assigning `system_super_admin` role via proper RBAC.
    - `POST /auth/login` valid credentials returning 200, setting `Set-Cookie` (`HttpOnly`, `SameSite=Lax`, `Path=/`), and storing only SHA-256 `token_hash` in DB (no raw token in DB).
-   - `POST /auth/login` invalid password returning generic `401 {"error":"Unauthorized","message":"Invalid email or password"}`.
-   - `POST /auth/login` unknown email returning generic `401 {"error":"Unauthorized","message":"Invalid email or password"}`.
-   - `POST /auth/login` inactive user (`is_active = false`) returning generic `401 {"error":"Unauthorized","message":"Invalid email or password"}`.
-   - `GET /auth/me` with valid session cookie returning 200 with user profile and effective permissions grants (never returning password_hash or raw token).
-   - `GET /auth/me` with Bearer session token returning 200.
-   - `GET /auth/me` without session returning 401.
+   - `POST /auth/login` invalid password, unknown email, inactive user returning generic `401 Unauthorized` without user enumeration.
+   - `GET /auth/me` with valid session cookie or Bearer token returning 200 with user profile and effective permissions grants.
    - `POST /auth/logout` revoking session in DB and clearing session cookie (`Max-Age=0`).
-   - `GET /auth/me` after logout returning 401 (session revoked in DB).
-   - `GET /auth/me` with expired session (`expires_at < now`) returning 401.
-   - Foreign Origin mutating request (`Origin: https://evil-attacker.com`) rejected with `403 Forbidden` (`{"error":"Forbidden","message":"Invalid Origin/Referer"}`).
-   - Allowed Origin mutating request (`Origin: http://127.0.0.1:3001`) accepted with 200.
-   - Login rate limiting returning `429 Too Many Requests` after exceeding rate limit threshold.
-   - Session persistence verified across separate database connections.
-6. Production smoke test:
-   `TEST_DATABASE_URL='postgresql://platform@127.0.0.1:55432/m2_smoke_db' pnpm test:smoke`:
-   PASS (Production API readiness against migrated PostgreSQL, live endpoint 200, unavailable DB readiness 503, web and admin HTTP 200).
+   - CSRF & Origin: Mutating requests with foreign Origin/Referer rejected with `403 Forbidden`; allowed Origin accepted; non-browser API clients with Bearer token allowed without Origin; safe GET requests never blocked.
+   - Rate limiting: Login brute-force limit enforced (keying by `IP + normalized email`, 5 requests/minute).
 
-**Checks NOT run / Scope limitations**:
-- Hosted CI on GitHub: NOT RUN (remote configured, awaiting push).
-- Full browser automation: Verified via unit, Next.js SSR build, Next.js start smoke test, and complete HTTP integration tests. (Headless browser subagent NOT RUN due to no automated browser runner container in environment).
-- User/Role Management CRUD UI: Belongs to M2.4 (NOT IN M2.2 SCOPE).
-- Status for Slice M2.2: `VERIFIED`.
+**Component Status Breakdown**:
+- `M2.2 Authentication API`: **VERIFIED**
+- `M2.2 Database/session behavior`: **VERIFIED**
+- `M2.2 Admin Login UI build`: **PASS**
+- `M2.2 Browser runtime flow`: **NOT RUN / READY_FOR_TEST**
+  - Reason: Headless Playwright manager download endpoint returned 404 for Windows runner in current environment.
+- Overall M2.2 Milestone Status: **READY_FOR_TEST** (retained pending browser runtime per `DEFINITION_OF_DONE.md`).
+
+---
+
+### TR-20260907-M2-3 — Scoped Authorization Guards
+
+- Date/Time: 2026-09-07T08:42:00+07:00
+- Environment: Windows, Node 24.18.0, pnpm 11.17.0, PostgreSQL 16.14 portable (`127.0.0.1:55432`).
+- Target Branch: `main`
+
+**Executed checks**:
+1. Scoped Authorization Guard Implementation (`apps/api/src/auth.guard.ts`):
+   - `requireAuthentication`: Resolves session via cookie or Bearer token, attaches `request.authSession`, returns `401 Unauthorized` on missing/expired/inactive session.
+   - `requirePermission`: Enforces permission check using hierarchical Scoped RBAC engine (`GLOBAL` and `SITE` scopes). Returns `401` if unauthenticated, returns `403 Forbidden` (`{"error":"FORBIDDEN","message":"Insufficient permissions for target scope"}`) if permission is missing.
+2. Proof Routes Verification:
+   - `GET /admin/proof` (guarded by `users.read` with `GLOBAL` scope):
+     - Anonymous -> 401 Unauthorized
+     - Global Admin with `users.read` -> 200 OK
+     - Site Editor lacking `users.read` -> 403 Forbidden
+     - Regular viewer lacking permission -> 403 Forbidden
+   - `GET /sites/:siteId/proof` (guarded by `sites.read` with `SITE` scope):
+     - Anonymous -> 401 Unauthorized
+     - Global Admin -> 200 OK on Site A and Site B
+     - Site Editor with Site A grant -> 200 OK on Site A
+     - Site Editor with Site A grant -> 403 Forbidden on Site B (Verified Site Isolation)
+     - Regular viewer lacking permission -> 403 Forbidden
+3. Production Cookie Security Verification:
+   - Name: `__Host-platform_session`
+   - `HttpOnly = true`
+   - `Secure = true`
+   - `SameSite = Lax`
+   - `Path = /`
+   - `Domain` attribute is strictly ABSENT.
+4. Session Lifecycle Hardening Verification:
+   - Absolute expiry (> 7 days) -> 401
+   - Idle timeout (> 24 hours) -> 401
+   - Rolling `last_active_at` updates (recorded activity updates `last_active_at` timestamp after 15m)
+   - User deactivation (`isActive = false`) -> existing active session is immediately rejected with 401.
+5. Automated Test Pipeline:
+   - `pnpm lint`: PASS
+   - `pnpm typecheck`: PASS (9 Turbo tasks)
+   - `pnpm test`: PASS (17 unit tests)
+   - `pnpm build`: PASS (6 Turbo tasks)
+   - `pnpm test:integration`: PASS (3 suites on dedicated clean PostgreSQL 16 DB `m2_full_pipeline_db`)
+   - `pnpm test:smoke`: PASS (Production Fastify readiness, unavailable DB 503, web and admin HTTP 200)
+
+**Status for Slice M2.3**: **VERIFIED**
 
 

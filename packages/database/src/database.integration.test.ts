@@ -368,21 +368,372 @@ it('verifies M2.2 Fastify Auth API endpoints (login, cookies, me, logout, rate l
     });
     expect(meAfterLogout.statusCode).toBe(401);
 
-    // 12. Rate limiting test on /auth/login (exceed 5 attempts)
-    for (let i = 0; i < 4; i++) {
+    // 12. Rate limiting test on /auth/login (exceed 5 attempts for rate_limit@example.com)
+    for (let i = 0; i < 5; i++) {
       await app.inject({
         method: 'POST',
         url: '/auth/login',
+        headers: { 'content-type': 'application/json' },
         payload: { email: 'rate_limit@example.com', password: 'wrong' },
       });
     }
     const rateLimitedRes = await app.inject({
       method: 'POST',
       url: '/auth/login',
+      headers: { 'content-type': 'application/json' },
       payload: { email: 'rate_limit@example.com', password: 'wrong' },
     });
     expect(rateLimitedRes.statusCode).toBe(429);
   } finally {
     await app.close();
+  }
+}, 30000);
+
+it('verifies production cookie attributes, session lifecycle (absolute expiry, idle timeout, rolling update, deactivation), and M2.3 scoped authorization guards', async () => {
+  // 1. Setup production Fastify app instance
+  const prodApp = buildApp({
+    checkDatabase: async () => {},
+    database,
+    nodeEnv: 'production',
+    cookieSecret: 'a-custom-32-chars-production-secret-for-tests!',
+    corsOrigin: 'http://localhost:3001',
+  });
+  await prodApp.ready();
+
+  try {
+    const prodCookieName = getSessionCookieName(true);
+    expect(prodCookieName).toBe('__Host-platform_session');
+
+    const password = 'ProductionUserSecret123!';
+    const passwordHash = await hashPassword(password);
+
+    // Create test user 1: Global Admin with users.read and sites.read
+    const [globalAdmin] = await database.db
+      .insert(users)
+      .values({
+        email: 'global_admin@example.com',
+        passwordHash,
+        name: 'Global Administrator',
+        isActive: true,
+      })
+      .returning();
+
+    // Create test user 2: Site A Editor (only sites.read on site-A)
+    const [siteEditor] = await database.db
+      .insert(users)
+      .values({
+        email: 'site_editor@example.com',
+        passwordHash,
+        name: 'Site Editor',
+        isActive: true,
+      })
+      .returning();
+
+    // Create test user 3: Regular viewer (no admin permissions)
+    const [regularUser] = await database.db
+      .insert(users)
+      .values({
+        email: 'regular_user@example.com',
+        passwordHash,
+        name: 'Regular Viewer',
+        isActive: true,
+      })
+      .returning();
+    expect(regularUser.id).toBeDefined();
+
+    // Assign global super admin role to globalAdmin
+    const superAdminRole = await database.db.query.roles.findFirst({
+      where: (r, { eq: eqOp }) => eqOp(r.key, 'system_super_admin'),
+    });
+    if (superAdminRole) {
+      await database.db.insert(userRoleAssignments).values({
+        userId: globalAdmin.id,
+        roleId: superAdminRole.id,
+        scopeKind: 'global',
+        scopeId: null,
+      });
+    }
+
+    // Create a site_viewer role with 'sites.read' permission
+    const sitesReadPerm = await database.db.query.permissions.findFirst({
+      where: (p, { eq: eqOp }) => eqOp(p.key, 'sites.read'),
+    });
+    expect(sitesReadPerm).toBeDefined();
+
+    const [siteRole] = await database.db
+      .insert(roles)
+      .values({
+        key: 'site_viewer_role',
+        name: 'Site Viewer Role',
+        description: 'Read only for specific site',
+        isSystem: false,
+      })
+      .returning();
+
+    await database.db.insert(rolePermissions).values({
+      roleId: siteRole.id,
+      permissionId: sitesReadPerm!.id,
+    });
+
+    const targetSiteA = 'site-alpha-123';
+    const targetSiteB = 'site-beta-456';
+
+    // Assign site_viewer role to siteEditor for targetSiteA only
+    await database.db.insert(userRoleAssignments).values({
+      userId: siteEditor.id,
+      roleId: siteRole.id,
+      scopeKind: 'site',
+      scopeId: targetSiteA,
+    });
+
+    // --- A. Production Cookie Security Verification ---
+    const prodLoginRes = await prodApp.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: {
+        'content-type': 'application/json',
+      },
+      payload: { email: 'global_admin@example.com', password },
+    });
+    expect(prodLoginRes.statusCode).toBe(200);
+
+    const setCookie = prodLoginRes.headers['set-cookie'] as string;
+    expect(setCookie).toBeDefined();
+    expect(setCookie).toContain('__Host-platform_session=');
+    expect(setCookie).toContain('HttpOnly');
+    expect(setCookie).toContain('Secure');
+    expect(setCookie).toContain('SameSite=Lax');
+    expect(setCookie).toContain('Path=/');
+    // __Host- cookies MUST NOT specify a Domain attribute
+    expect(setCookie.toLowerCase()).not.toContain('domain=');
+
+    const globalAdminToken = prodLoginRes.json().token;
+
+    // Login siteEditor
+    const siteEditorLoginRes = await prodApp.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: {
+        'content-type': 'application/json',
+      },
+      payload: { email: 'site_editor@example.com', password },
+    });
+    const siteEditorToken = siteEditorLoginRes.json().token;
+
+    // Login regularUser
+    const regularUserLoginRes = await prodApp.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: {
+        'content-type': 'application/json',
+      },
+      payload: { email: 'regular_user@example.com', password },
+    });
+    const regularUserToken = regularUserLoginRes.json().token;
+
+    // --- B. Session Lifecycle Verification ---
+
+    // 1. Test Absolute Expiration (> 7 days)
+    const expiredToken = generateSessionToken();
+    const expiredHash = hashSessionToken(expiredToken);
+    await database.db.insert(sessions).values({
+      userId: globalAdmin.id,
+      tokenHash: expiredHash,
+      expiresAt: new Date(Date.now() - 1000), // Expired 1 second ago
+    });
+
+    const expiredRes = await prodApp.inject({
+      method: 'GET',
+      url: '/auth/me',
+      cookies: { [prodCookieName]: expiredToken },
+    });
+    expect(expiredRes.statusCode).toBe(401);
+
+    // 2. Test Idle Timeout (> 24 hours inactivity)
+    const idleToken = generateSessionToken();
+    const idleHash = hashSessionToken(idleToken);
+    await database.db.insert(sessions).values({
+      userId: globalAdmin.id,
+      tokenHash: idleHash,
+      expiresAt: new Date(Date.now() + 5 * 24 * 3600 * 1000), // Valid absolute expiry
+      lastActiveAt: new Date(Date.now() - 25 * 3600 * 1000), // Inactive for 25 hours
+    });
+
+    const idleRes = await prodApp.inject({
+      method: 'GET',
+      url: '/auth/me',
+      cookies: { [prodCookieName]: idleToken },
+    });
+    expect(idleRes.statusCode).toBe(401);
+
+    // 3. Test Rolling last_active_at update
+    const rollingToken = generateSessionToken();
+    const rollingHash = hashSessionToken(rollingToken);
+    const initialActive = new Date(Date.now() - 30 * 60 * 1000); // 30 mins ago
+    const [rollingSession] = await database.db
+      .insert(sessions)
+      .values({
+        userId: globalAdmin.id,
+        tokenHash: rollingHash,
+        expiresAt: new Date(Date.now() + 5 * 24 * 3600 * 1000),
+        lastActiveAt: initialActive,
+      })
+      .returning();
+
+    const rollingRes = await prodApp.inject({
+      method: 'GET',
+      url: '/auth/me',
+      cookies: { [prodCookieName]: rollingToken },
+    });
+    expect(rollingRes.statusCode).toBe(200);
+
+    const updatedSession = await database.db.query.sessions.findFirst({
+      where: (s, { eq: eqOp }) => eqOp(s.id, rollingSession.id),
+    });
+    expect(updatedSession!.lastActiveAt.getTime()).toBeGreaterThan(initialActive.getTime());
+
+    // 4. Test User Deactivation after login immediately revokes active session
+    const [tempUser] = await database.db
+      .insert(users)
+      .values({
+        email: 'temp_active@example.com',
+        passwordHash,
+        name: 'Temp User',
+        isActive: true,
+      })
+      .returning();
+
+    const tempLoginRes = await prodApp.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: { 'content-type': 'application/json' },
+      payload: { email: 'temp_active@example.com', password },
+    });
+    const tempToken = tempLoginRes.json().token;
+
+    // Verify session is active
+    const activeMeRes = await prodApp.inject({
+      method: 'GET',
+      url: '/auth/me',
+      cookies: { [prodCookieName]: tempToken },
+    });
+    expect(activeMeRes.statusCode).toBe(200);
+
+    // Deactivate user
+    await database.db.update(users).set({ isActive: false }).where(eq(users.id, tempUser.id));
+
+    // Session is now rejected with 401
+    const deactivatedMeRes = await prodApp.inject({
+      method: 'GET',
+      url: '/auth/me',
+      cookies: { [prodCookieName]: tempToken },
+    });
+    expect(deactivatedMeRes.statusCode).toBe(401);
+
+    // --- C. M2.3 Scoped Authorization Guards Verification ---
+
+    // 1. Anonymous access -> 401 on /admin/proof and /sites/:siteId/proof
+    const anonAdminProof = await prodApp.inject({
+      method: 'GET',
+      url: '/admin/proof',
+    });
+    expect(anonAdminProof.statusCode).toBe(401);
+    expect(anonAdminProof.json().error).toBe('UNAUTHORIZED');
+
+    const anonSiteProof = await prodApp.inject({
+      method: 'GET',
+      url: `/sites/${targetSiteA}/proof`,
+    });
+    expect(anonSiteProof.statusCode).toBe(401);
+
+    // 2. Global admin with users.read -> 200 on /admin/proof
+    const globalAdminProof = await prodApp.inject({
+      method: 'GET',
+      url: '/admin/proof',
+      cookies: { [prodCookieName]: globalAdminToken },
+    });
+    expect(globalAdminProof.statusCode).toBe(200);
+    expect(globalAdminProof.json()).toEqual({
+      status: 'ok',
+      message: 'Global admin proof accessed',
+      user: expect.objectContaining({ email: 'global_admin@example.com' }),
+    });
+
+    // 3. Global admin with sites.read -> 200 on any site (/sites/:siteId/proof)
+    const globalSiteAProof = await prodApp.inject({
+      method: 'GET',
+      url: `/sites/${targetSiteA}/proof`,
+      cookies: { [prodCookieName]: globalAdminToken },
+    });
+    expect(globalSiteAProof.statusCode).toBe(200);
+
+    const globalSiteBProof = await prodApp.inject({
+      method: 'GET',
+      url: `/sites/${targetSiteB}/proof`,
+      cookies: { [prodCookieName]: globalAdminToken },
+    });
+    expect(globalSiteBProof.statusCode).toBe(200);
+
+    // 4. Site Editor with sites.read for Site A -> 200 on Site A
+    const siteEditorAProof = await prodApp.inject({
+      method: 'GET',
+      url: `/sites/${targetSiteA}/proof`,
+      cookies: { [prodCookieName]: siteEditorToken },
+    });
+    expect(siteEditorAProof.statusCode).toBe(200);
+    expect(siteEditorAProof.json()).toEqual({
+      status: 'ok',
+      message: 'Site proof accessed',
+      siteId: targetSiteA,
+      user: expect.objectContaining({ email: 'site_editor@example.com' }),
+    });
+
+    // 5. Site Editor with sites.read for Site A -> 403 on Site B (Site Isolation!)
+    const siteEditorBProof = await prodApp.inject({
+      method: 'GET',
+      url: `/sites/${targetSiteB}/proof`,
+      cookies: { [prodCookieName]: siteEditorToken },
+    });
+    expect(siteEditorBProof.statusCode).toBe(403);
+    expect(siteEditorBProof.json()).toEqual({
+      error: 'FORBIDDEN',
+      message: 'Insufficient permissions for target scope',
+    });
+
+    // 6. Site Editor -> 403 on /admin/proof (Missing users.read)
+    const siteEditorAdminProof = await prodApp.inject({
+      method: 'GET',
+      url: '/admin/proof',
+      cookies: { [prodCookieName]: siteEditorToken },
+    });
+    expect(siteEditorAdminProof.statusCode).toBe(403);
+    expect(siteEditorAdminProof.json().error).toBe('FORBIDDEN');
+
+    // 7. Regular user without permissions -> 403 on both proof routes
+    const regularAdminProof = await prodApp.inject({
+      method: 'GET',
+      url: '/admin/proof',
+      cookies: { [prodCookieName]: regularUserToken },
+    });
+    expect(regularAdminProof.statusCode).toBe(403);
+
+    const regularSiteProof = await prodApp.inject({
+      method: 'GET',
+      url: `/sites/${targetSiteA}/proof`,
+      cookies: { [prodCookieName]: regularUserToken },
+    });
+    expect(regularSiteProof.statusCode).toBe(403);
+
+    // 8. Bearer Token support on Scoped Guard endpoints
+    const bearerProof = await prodApp.inject({
+      method: 'GET',
+      url: '/admin/proof',
+      headers: {
+        authorization: `Bearer ${globalAdminToken}`,
+      },
+    });
+    expect(bearerProof.statusCode).toBe(200);
+  } finally {
+    await prodApp.close();
   }
 }, 30000);

@@ -184,8 +184,36 @@ No production/service installation; .local-postgres artifacts kept and ignored.
 - `TEST_DATABASE_URL=.../m2_clean_verify_db pnpm test:integration` -> PASS (2 suites)
 - `TEST_DATABASE_URL=.../m2_smoke_db pnpm test:smoke` -> PASS
 
-**Resulting status:** M2.2: VERIFIED.
-**Next exact task:** M2.3 — Scoped Authorization Guards (RBAC middleware/preHandler, permission enforcement, site-scoped resolution).
+**Resulting status:** M2.2: READY_FOR_TEST (API & Database Verified; Browser Runtime Not Run).
+**Next exact task:** M2.3 — Scoped Authorization Guards.
+
+## 2026-09-07 08:42 — M2.2 Security Hardening & M2.3 Scoped Authorization Guards Completed
+
+**Agent/Role:** Backend / Security / Platform
+**Task:** Hoàn tất bảo mật cho M2.2 (CSRF transport hardening, idle timeout 24h, rolling activity update, production cookie `__Host-` validation, IP+email rate limiting) và triển khai Milestone M2.3 Scoped Authorization Guards (`requireAuthentication` và `requirePermission` preHandlers, hierarchical Scoped RBAC `GLOBAL`/`SITE`, proof endpoints `/admin/proof` và `/sites/:siteId/proof`, và comprehensive integration tests trên PostgreSQL 16).
+
+**Files changed:**
+- `packages/config/src/index.ts` & `packages/config/src/config.test.ts`: Bổ sung `superRefine` kiểm tra bắt buộc `COOKIE_SECRET` trong production không được dùng default và có độ dài >= 32 ký tự.
+- `packages/auth/src/auth.test.ts`: Bổ sung unit tests cho cookie naming dev vs prod.
+- `apps/api/src/auth.service.ts`: Bổ sung kiểm tra timeout idle 24 giờ (`IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1000`) và cập nhật rolling `last_active_at`.
+- `apps/api/src/auth.guard.ts` (NEW): Triển khai `requireAuthentication` và `requirePermission` preHandler hooks.
+- `apps/api/src/app.ts`: Tích hợp CSRF/Content-Type check, `keyGenerator` theo IP + normalized email cho rate-limiting login, bảo đảm cookie production không có `Domain` attribute, và đăng ký 2 proof endpoints (`GET /admin/proof` và `GET /sites/:siteId/proof`).
+- `apps/api/src/app.test.ts`: Mở rộng unit tests cho referer origin fallback, non-JSON Content-Type rejection (415), safe GET requests, và non-browser Bearer API client requests.
+- `packages/database/src/database.integration.test.ts`: Mở rộng integration tests kiểm thử toàn diện production cookie, absolute timeout, idle timeout, rolling active update, user deactivation session invalidation, global grants, site isolation (site A grant allow site A, deny site B), unauthenticated (401), và insufficient permissions (403).
+- `scripts/smoke.mjs`: Thêm `COOKIE_SECRET` cho production launch.
+
+**Commands:**
+- `pnpm lint` -> PASS (0 errors, 0 warnings)
+- `pnpm typecheck` -> PASS (9 tasks)
+- `pnpm test` -> PASS (17 unit tests across 3 suites)
+- `pnpm build` -> PASS (6 tasks)
+- `TEST_DATABASE_URL=.../m2_full_pipeline_db pnpm test:integration` -> PASS (3 suites on clean PostgreSQL 16)
+- `TEST_DATABASE_URL=.../m2_full_pipeline_db pnpm test:smoke` -> PASS
+
+**Resulting status:**
+- M2.2: `READY_FOR_TEST` (API & DB Verified; Browser UX Not Run)
+- M2.3: `VERIFIED`
+**Next exact task:** M2.4 — Admin User & Role Management CRUD.
 
 
 

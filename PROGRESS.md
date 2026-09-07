@@ -10,7 +10,7 @@
 |---|---|---|---|---|
 | M0 | Architecture & Agent Governance | VERIFIED | Architect | Markdown package |
 | M1 | Monorepo Foundation | VERIFIED | Orchestrator / Backend / QA | TEST_REPORT.md TR-20260907-M1-RERUN; independent verification passed; baseline commit 9294b50 pushed |
-| M2 | Auth + RBAC | IN_PROGRESS | Backend / Architect | M2.1 Identity Schema VERIFIED (TR-20260907-M2-1); M2.2 Auth Slice VERIFIED (TR-20260907-M2-2); M2.3 next |
+| M2 | Auth + RBAC | IN_PROGRESS | Backend / Architect | M2.1 VERIFIED; M2.2 READY_FOR_TEST (API/DB Verified); M2.3 Scoped Guards VERIFIED (TR-20260907-M2-3); M2.4 next |
 | M3 | CMS Core | TODO | Backend/Admin | - |
 | M4 | Media + Menu + Forms + Settings | TODO | Backend/Admin | - |
 | M5 | Page Builder + Module Registry | TODO | Admin/Frontend | - |
@@ -26,9 +26,9 @@
 |---|---|---|---|---|
 | Repository bootstrap | VERIFIED | Orchestrator | QA | Frozen/fresh install, typecheck/build pass; independent verification confirmed |
 | PostgreSQL migrations | VERIFIED | Backend | QA | PostgreSQL 16 clean/repeat migration + persistence pass; verified with portable PostgreSQL 16 |
-| User authentication | VERIFIED | Backend | Security/QA | M2.1 schema & M2.2 Fastify login/logout/me/session/cookies/UI VERIFIED (TR-20260907-M2-2) |
-| Role management | IN_PROGRESS | Backend/Admin | Security/QA | M2.1 roles/permissions schema & seed VERIFIED |
-| Permission management | IN_PROGRESS | Backend/Admin | Security/QA | M2.1 scoped permission evaluation engine VERIFIED; M2.3 authorization guards next |
+| User authentication | VERIFIED | Backend | Security/QA | M2.1 schema & M2.2 Fastify login/logout/me/session/cookies/UI (API/DB VERIFIED; Browser READY_FOR_TEST) |
+| Role management | IN_PROGRESS | Backend/Admin | Security/QA | M2.1 roles/permissions schema & seed VERIFIED; M2.4 admin management next |
+| Permission management | VERIFIED | Backend/Admin | Security/QA | M2.1 engine & M2.3 Fastify Scoped Authorization Guards VERIFIED (TR-20260907-M2-3) |
 | Content Type builder | TODO | Backend/Admin | QA | schema-driven |
 | Content Entry CRUD | TODO | Backend/Admin | QA | dynamic fields |
 | Category/Taxonomy | TODO | Backend/Admin | QA | reusable |

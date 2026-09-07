@@ -2,9 +2,10 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
-import { getSessionCookieName } from '@platform/auth';
+import { getSessionCookieName, normalizeEmail } from '@platform/auth';
 import type { createDatabase } from '@platform/database';
 import { AuthService, type AuthenticatedUserSession } from './auth.service.js';
+import { extractSessionToken, requireAuthentication, requirePermission } from './auth.guard.js';
 
 export interface AppOptions {
   checkDatabase: () => Promise<void>;
@@ -20,6 +21,8 @@ declare module 'fastify' {
     authSession?: AuthenticatedUserSession;
   }
 }
+
+export { extractSessionToken, requireAuthentication, requirePermission } from './auth.guard.js';
 
 export function buildApp(
   checkDatabaseOrOptions: (() => Promise<void>) | AppOptions,
@@ -45,24 +48,24 @@ export function buildApp(
 
   const authService = options.database ? new AuthService(options.database) : null;
 
-  // 1. Register plugins
+  // 1. Register Fastify Cookie Plugin
   void app.register(cookie, {
     secret: options.cookieSecret ?? 'development-only-insecure-cookie-secret-32-chars-min!',
   });
 
+  // 2. Register Fastify CORS Plugin
   void app.register(cors, {
     origin: (origin, cb) => {
-      // Allow requests with no origin (e.g. curl, server-to-server, mobile apps)
       if (!origin) return cb(null, true);
       if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
         return cb(null, true);
       }
-      // For CORS policy, passing false will not add CORS headers but not crash with 500
       return cb(null, false);
     },
     credentials: true,
   });
 
+  // 3. Register Fastify Rate Limit Plugin
   void app.register(rateLimit, {
     global: false,
   });
@@ -72,10 +75,18 @@ export function buildApp(
     loginLimiter = app.createRateLimit({
       max: 5,
       timeWindow: 60000,
+      keyGenerator: (request) => {
+        const ip = request.ip;
+        const body = request.body as { email?: unknown } | undefined;
+        if (body && typeof body.email === 'string' && body.email.trim()) {
+          return `${ip}:${normalizeEmail(body.email)}`;
+        }
+        return ip;
+      },
     });
   });
 
-  // 2. CSRF / Origin Verification Pre-handler Hook on Mutating Endpoints
+  // 4. Hardened CSRF & Origin Verification Pre-handler Hook on Mutating Endpoints
   app.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
     const mutatingMethods = ['POST', 'PUT', 'PATCH', 'DELETE'];
     if (!mutatingMethods.includes(request.method)) {
@@ -85,12 +96,13 @@ export function buildApp(
     const origin = request.headers.origin;
     const referer = request.headers.referer;
 
-    // If an Origin header is present in the browser request, it must be in allowedOrigins
+    // A. Origin header verification
     if (origin) {
       if (!allowedOrigins.includes(origin) && !allowedOrigins.includes('*')) {
         return reply.code(403).send({ error: 'FORBIDDEN', message: 'Invalid request origin' });
       }
     } else if (referer) {
+      // B. Referer header fallback verification
       try {
         const refererOrigin = new URL(referer).origin;
         if (!allowedOrigins.includes(refererOrigin) && !allowedOrigins.includes('*')) {
@@ -100,24 +112,20 @@ export function buildApp(
         return reply.code(403).send({ error: 'FORBIDDEN', message: 'Malformed referer header' });
       }
     }
+
+    // C. Content-Type verification for JSON endpoints with payload
+    if (request.body && request.headers['content-type']) {
+      const contentType = request.headers['content-type'].toLowerCase();
+      if (!contentType.includes('application/json')) {
+        return reply.code(415).send({
+          error: 'UNSUPPORTED_MEDIA_TYPE',
+          message: 'Expected application/json Content-Type',
+        });
+      }
+    }
   });
 
-  // Helper: Extract session token from cookie (precedence) or Authorization Bearer header
-  function extractSessionToken(request: FastifyRequest): string | null {
-    // 1. Cookie precedence (Browser Admin)
-    const cookieToken = request.cookies[cookieName];
-    if (cookieToken) return cookieToken;
-
-    // 2. Bearer Header precedence (API/Mobile clients)
-    const authHeader = request.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      return authHeader.slice(7).trim();
-    }
-
-    return null;
-  }
-
-  // 3. Health check endpoints
+  // 5. Health check endpoints
   app.get('/health/live', async () => ({ status: 'ok' }));
 
   app.get('/health/ready', async (_request, reply) => {
@@ -130,11 +138,11 @@ export function buildApp(
     }
   });
 
-  // 4. Authentication Endpoints
+  // 6. Authentication Endpoints
   app.post('/auth/login', async (request: FastifyRequest, reply: FastifyReply) => {
     reply.header('Cache-Control', 'no-store');
 
-    // Enforce brute-force rate limit
+    // Enforce brute-force rate limit by IP + normalized email
     if (loginLimiter) {
       const limitStatus = await loginLimiter(request);
       if (!limitStatus.isAllowed && limitStatus.isExceeded) {
@@ -162,7 +170,7 @@ export function buildApp(
       return reply.code(401).send({ error: 'UNAUTHORIZED', message: 'Invalid email or password' });
     }
 
-    // Set secure HttpOnly cookie
+    // Set secure HttpOnly cookie (strictly without Domain attribute for __Host- compatibility)
     void reply.setCookie(cookieName, result.rawToken, {
       path: '/',
       httpOnly: true,
@@ -173,14 +181,14 @@ export function buildApp(
 
     return {
       user: result.user,
-      token: result.rawToken, // Also return token for mobile/API clients
+      token: result.rawToken,
     };
   });
 
   app.post('/auth/logout', async (request: FastifyRequest, reply: FastifyReply) => {
     reply.header('Cache-Control', 'no-store');
 
-    const token = extractSessionToken(request);
+    const token = extractSessionToken(request, cookieName);
     if (token && authService) {
       await authService.logout(token);
     }
@@ -195,25 +203,50 @@ export function buildApp(
     return { status: 'ok' };
   });
 
-  app.get('/auth/me', async (request: FastifyRequest, reply: FastifyReply) => {
+  app.get('/auth/me', {
+    preHandler: [requireAuthentication(authService, cookieName)],
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
     reply.header('Cache-Control', 'no-store');
-
-    if (!authService) {
-      return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
-    }
-
-    const token = extractSessionToken(request);
-    if (!token) {
-      return reply.code(401).send({ error: 'UNAUTHORIZED', message: 'Authentication required' });
-    }
-
-    const sessionData = await authService.resolveSession(token);
-    if (!sessionData) {
-      return reply.code(401).send({ error: 'UNAUTHORIZED', message: 'Invalid or expired session' });
-    }
-
-    return sessionData;
+    return request.authSession;
   });
+
+  // 7. M2.3 Scoped Authorization Proof Endpoints
+  app.get(
+    '/admin/proof',
+    {
+      preHandler: [requirePermission(authService, cookieName, 'users.read', () => ({ kind: 'global' }))],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      return {
+        status: 'ok',
+        message: 'Global admin proof accessed',
+        user: request.authSession?.user,
+      };
+    }
+  );
+
+  app.get(
+    '/sites/:siteId/proof',
+    {
+      preHandler: [
+        requirePermission(authService, cookieName, 'sites.read', (req) => ({
+          kind: 'site',
+          siteId: (req.params as { siteId: string }).siteId,
+        })),
+      ],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      const { siteId } = request.params as { siteId: string };
+      return {
+        status: 'ok',
+        message: 'Site proof accessed',
+        siteId,
+        user: request.authSession?.user,
+      };
+    }
+  );
 
   return app;
 }

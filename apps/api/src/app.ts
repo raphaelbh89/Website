@@ -5,6 +5,7 @@ import rateLimit from '@fastify/rate-limit';
 import { getSessionCookieName, normalizeEmail } from '@platform/auth';
 import type { createDatabase } from '@platform/database';
 import { AuthService, type AuthenticatedUserSession } from './auth.service.js';
+import { AdminService } from './admin.service.js';
 import { extractSessionToken, requireAuthentication, requirePermission } from './auth.guard.js';
 
 export interface AppOptions {
@@ -47,6 +48,7 @@ export function buildApp(
   });
 
   const authService = options.database ? new AuthService(options.database) : null;
+  const adminService = options.database ? new AdminService(options.database) : null;
 
   // 1. Register Fastify Cookie Plugin
   void app.register(cookie, {
@@ -245,6 +247,373 @@ export function buildApp(
         siteId,
         user: request.authSession?.user,
       };
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // 8. M2.4 User Management Endpoints
+  // ---------------------------------------------------------------------------
+
+  app.get(
+    '/users',
+    {
+      preHandler: [requirePermission(authService, cookieName, 'users.read', () => ({ kind: 'global' }))],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!adminService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+
+      const query = request.query as { page?: string; limit?: string; search?: string; isActive?: string };
+      const page = query.page ? parseInt(query.page, 10) : 1;
+      const limit = query.limit ? parseInt(query.limit, 10) : 20;
+      const isActive = query.isActive !== undefined ? query.isActive === 'true' : undefined;
+
+      const result = await adminService.listUsers({ page, limit, search: query.search, isActive });
+      return result;
+    }
+  );
+
+  app.post(
+    '/users',
+    {
+      preHandler: [requirePermission(authService, cookieName, 'users.create', () => ({ kind: 'global' }))],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!adminService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+
+      const body = request.body as { email?: string; name?: string; password?: string; isActive?: boolean };
+      if (!body) {
+        return reply.code(400).send({ error: 'BAD_REQUEST', message: 'Request body required' });
+      }
+
+      const res = await adminService.createUser({
+        email: body.email ?? '',
+        name: body.name ?? '',
+        password: body.password ?? '',
+        isActive: body.isActive,
+      });
+
+      if (res.error) {
+        return reply.code(res.status ?? 400).send({ error: res.status === 409 ? 'CONFLICT' : 'BAD_REQUEST', message: res.error });
+      }
+
+      return reply.code(201).send(res);
+    }
+  );
+
+  app.get(
+    '/users/:id',
+    {
+      preHandler: [requirePermission(authService, cookieName, 'users.read', () => ({ kind: 'global' }))],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!adminService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+
+      const { id } = request.params as { id: string };
+      const user = await adminService.getUser(id);
+      if (!user) {
+        return reply.code(404).send({ error: 'NOT_FOUND', message: 'User not found' });
+      }
+
+      return { user };
+    }
+  );
+
+  app.patch(
+    '/users/:id',
+    {
+      preHandler: [requirePermission(authService, cookieName, 'users.update', () => ({ kind: 'global' }))],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!adminService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+
+      const { id } = request.params as { id: string };
+      const body = request.body as { email?: string; name?: string; password?: string; isActive?: boolean };
+      if (!body) {
+        return reply.code(400).send({ error: 'BAD_REQUEST', message: 'Request body required' });
+      }
+
+      const res = await adminService.updateUser(id, body);
+      if (res.error) {
+        const statusCode = res.status ?? 400;
+        const errType = statusCode === 404 ? 'NOT_FOUND' : statusCode === 409 ? 'CONFLICT' : 'BAD_REQUEST';
+        return reply.code(statusCode).send({ error: errType, message: res.error });
+      }
+
+      return res;
+    }
+  );
+
+  app.post(
+    '/users/:id/deactivate',
+    {
+      preHandler: [requirePermission(authService, cookieName, 'users.deactivate', () => ({ kind: 'global' }))],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!adminService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+
+      const { id } = request.params as { id: string };
+      const res = await adminService.deactivateUser(id);
+      if (res.error) {
+        const statusCode = res.status ?? 400;
+        const errType = statusCode === 404 ? 'NOT_FOUND' : 'BAD_REQUEST';
+        return reply.code(statusCode).send({ error: errType, message: res.error });
+      }
+
+      return { status: 'ok', user: res.user };
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // 9. M2.4 Role Management Endpoints
+  // ---------------------------------------------------------------------------
+
+  app.get(
+    '/roles',
+    {
+      preHandler: [requirePermission(authService, cookieName, 'roles.read', () => ({ kind: 'global' }))],
+    },
+    async (_request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!adminService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+
+      const rolesList = await adminService.listRoles();
+      return { roles: rolesList };
+    }
+  );
+
+  app.post(
+    '/roles',
+    {
+      preHandler: [requirePermission(authService, cookieName, 'roles.manage', () => ({ kind: 'global' }))],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!adminService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+
+      const body = request.body as { key?: string; name?: string; description?: string; permissions?: string[] };
+      if (!body) {
+        return reply.code(400).send({ error: 'BAD_REQUEST', message: 'Request body required' });
+      }
+
+      const res = await adminService.createRole({
+        key: body.key ?? '',
+        name: body.name ?? '',
+        description: body.description,
+        permissions: body.permissions,
+      });
+
+      if (res.error) {
+        const statusCode = res.status ?? 400;
+        const errType = statusCode === 409 ? 'CONFLICT' : 'BAD_REQUEST';
+        return reply.code(statusCode).send({ error: errType, message: res.error });
+      }
+
+      return reply.code(201).send(res);
+    }
+  );
+
+  app.get(
+    '/roles/:id',
+    {
+      preHandler: [requirePermission(authService, cookieName, 'roles.read', () => ({ kind: 'global' }))],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!adminService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+
+      const { id } = request.params as { id: string };
+      const role = await adminService.getRole(id);
+      if (!role) {
+        return reply.code(404).send({ error: 'NOT_FOUND', message: 'Role not found' });
+      }
+
+      return { role };
+    }
+  );
+
+  app.patch(
+    '/roles/:id',
+    {
+      preHandler: [requirePermission(authService, cookieName, 'roles.manage', () => ({ kind: 'global' }))],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!adminService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+
+      const { id } = request.params as { id: string };
+      const body = request.body as { name?: string; description?: string };
+      if (!body) {
+        return reply.code(400).send({ error: 'BAD_REQUEST', message: 'Request body required' });
+      }
+
+      const res = await adminService.updateRole(id, body);
+      if (res.error) {
+        const statusCode = res.status ?? 400;
+        const errType = statusCode === 404 ? 'NOT_FOUND' : 'BAD_REQUEST';
+        return reply.code(statusCode).send({ error: errType, message: res.error });
+      }
+
+      return res;
+    }
+  );
+
+  app.put(
+    '/roles/:id/permissions',
+    {
+      preHandler: [requirePermission(authService, cookieName, 'roles.manage', () => ({ kind: 'global' }))],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!adminService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+
+      const { id } = request.params as { id: string };
+      const body = request.body as { permissions?: string[] };
+      if (!body || !Array.isArray(body.permissions)) {
+        return reply.code(400).send({ error: 'BAD_REQUEST', message: 'permissions array required' });
+      }
+
+      const res = await adminService.updateRolePermissions(id, body.permissions);
+      if (res.error) {
+        const statusCode = res.status ?? 400;
+        const errType = statusCode === 404 ? 'NOT_FOUND' : 'BAD_REQUEST';
+        return reply.code(statusCode).send({ error: errType, message: res.error });
+      }
+
+      return res;
+    }
+  );
+
+  app.get(
+    '/permissions',
+    {
+      preHandler: [requirePermission(authService, cookieName, 'roles.read', () => ({ kind: 'global' }))],
+    },
+    async (_request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!adminService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+
+      const perms = await adminService.listPermissions();
+      return { permissions: perms };
+    }
+  );
+
+  app.get(
+    '/sites',
+    {
+      preHandler: [requirePermission(authService, cookieName, 'sites.read', () => ({ kind: 'global' }))],
+    },
+    async (_request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!adminService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+
+      const sitesList = await adminService.listSites();
+      return { sites: sitesList };
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // 10. M2.4 Role Assignment Endpoints
+  // ---------------------------------------------------------------------------
+
+  app.get(
+    '/users/:id/roles',
+    {
+      preHandler: [requirePermission(authService, cookieName, 'roles.assign', () => ({ kind: 'global' }))],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!adminService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+
+      const { id } = request.params as { id: string };
+      const assignments = await adminService.listUserRoleAssignments(id);
+      return { assignments };
+    }
+  );
+
+  app.post(
+    '/users/:id/roles',
+    {
+      preHandler: [requirePermission(authService, cookieName, 'roles.assign', () => ({ kind: 'global' }))],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!adminService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+
+      const { id } = request.params as { id: string };
+      const body = request.body as { roleId?: string; scopeKind?: 'global' | 'site'; scopeId?: string | null };
+      if (!body || !body.roleId || !body.scopeKind) {
+        return reply.code(400).send({ error: 'BAD_REQUEST', message: 'roleId and scopeKind required' });
+      }
+
+      const res = await adminService.assignRole(id, {
+        roleId: body.roleId,
+        scopeKind: body.scopeKind,
+        scopeId: body.scopeId,
+      });
+
+      if (res.error) {
+        const statusCode = res.status ?? 400;
+        const errType = statusCode === 404 ? 'NOT_FOUND' : statusCode === 409 ? 'CONFLICT' : 'BAD_REQUEST';
+        return reply.code(statusCode).send({ error: errType, message: res.error });
+      }
+
+      return reply.code(201).send(res);
+    }
+  );
+
+  app.delete(
+    '/users/:id/roles/:assignmentId',
+    {
+      preHandler: [requirePermission(authService, cookieName, 'roles.assign', () => ({ kind: 'global' }))],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!adminService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+
+      const { id, assignmentId } = request.params as { id: string; assignmentId: string };
+      const res = await adminService.removeRoleAssignment(id, assignmentId);
+      if (res.error) {
+        const statusCode = res.status_code ?? 400;
+        const errType = statusCode === 404 ? 'NOT_FOUND' : 'BAD_REQUEST';
+        return reply.code(statusCode).send({ error: errType, message: res.error });
+      }
+
+      return { status: 'ok' };
     }
   );
 

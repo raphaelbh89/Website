@@ -4,8 +4,8 @@
 
 ## Project Status
 
-- Stage: `M2_IN_PROGRESS` (M1 foundation `VERIFIED` [commit `9294b50`]; M2.1 Identity Schema & Persistence `VERIFIED` [commit `a7b5a2d`]; M2.2 Auth Vertical Slice `READY_FOR_TEST` [API/DB Verified, Browser Not Run]; M2.3 Scoped Authorization Guards `VERIFIED`).
-- Source implementation: M2.1 schema, M2.2 auth vertical slice, and M2.3 scoped authorization guards verified (Fastify `requireAuthentication` & `requirePermission`, CSRF Origin validation, session lifecycle hardening, proof routes `/admin/proof` and `/sites/:siteId/proof`); M2.4 Admin User/Role Management next.
+- Stage: `M2_COMPLETED_BACKEND_VERIFIED` (M1 foundation `VERIFIED` [commit `9294b50`]; M2.1 Identity Schema & Persistence `VERIFIED` [commit `a7b5a2d`]; M2.2 Auth Vertical Slice `READY_FOR_TEST` [API/DB Verified, Browser Not Run]; M2.3 Scoped Authorization Guards `VERIFIED` [commit `d0a7782`]; M2.4 Admin User & Role Management `VERIFIED`).
+- Source implementation: M2 Identity, Auth, Scoped RBAC, and User/Role Management fully implemented and verified via automated integration suites against clean PostgreSQL 16 DB and Admin UI builds. Browser runtime flow remains `READY_FOR_TEST / NOT RUN`.
 - Target architecture: `Modular Monolith / Monorepo`
 - Multi-Agent workflow: `DEFINED`
 
@@ -18,7 +18,7 @@
 - TypeScript-first
 - Node.js 24 / pnpm 11.17.0 / Turborepo 2.10.12 / TypeScript 5.9.3 (ADR-0004).
 - Next.js 16.3.4 / React 19.2.8 for web/admin; Fastify 5.12.3 API.
-- Drizzle ORM 0.45.2 + Kit 0.31.10 / pg 8.23.0; generated SQL migration for sites and identity schema.
+- Drizzle ORM 0.45.2 + Kit 0.31.10 / pg 8.23.0; generated SQL migrations for sites, identity schema, and unique constraint indexes.
 - Vitest 4.0.18, ESLint 10.10.0; GitHub Actions verification workflow prepared.
 
 ### Apps
@@ -104,4 +104,5 @@ Các mục sau phải tạo ADR trước khi implement nếu chưa được ch�
 
 ## Next Recommended Milestone
  
-Complete `M2 — Auth + RBAC`: M2.1 Identity Schema, M2.2 Auth Vertical Slice, and M2.3 Scoped Authorization Guards are completed. Next task is M2.4 Admin User/Role Management (Admin API endpoints & management UI), followed by M3 CMS Core.
+Start **`M3 — Content Type & Dynamic Content Engine (CMS Core)`**: Schema and domain model for Content Types (JSON Schema definition, field types, validation rules), Content Entries (relational + JSONB payload, drafting/publishing status, revision tracking), and multi-site content isolation backed by PostgreSQL 16.
+

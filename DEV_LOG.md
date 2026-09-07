@@ -215,5 +215,38 @@ No production/service installation; .local-postgres artifacts kept and ignored.
 - M2.3: `VERIFIED`
 **Next exact task:** M2.4 — Admin User & Role Management CRUD.
 
+---
+
+## 2026-09-07 08:54 — M2.4 Admin User & Role Management Completed
+
+**Agent/Role:** Backend / Admin / Security
+**Task:** Triển khai Milestone M2.4 Admin User & Role Management (REST APIs đầy đủ cho Users, Roles, Permissions, Sites, Role Assignments; Database unique index migration `0002_cultured_loki.sql`; Last Super Admin Protection; Admin UI quản lý Users và Roles trong Next.js; và Comprehensive Integration Test Suite trên PostgreSQL 16 clean DB).
+
+**Files changed / created:**
+- `packages/database/src/schema.ts`: Thêm `uniqueIndex('user_role_assignments_unique_idx').on(table.userId, table.roleId, table.scopeKind, table.scopeId)` cho `userRoleAssignments`.
+- `packages/database/drizzle/0002_cultured_loki.sql` (NEW): Generated migration với `NULLS NOT DISTINCT` cho PostgreSQL 16.
+- `apps/api/src/admin.service.ts` (NEW): Triển khai `AdminService` xử lý toàn bộ nghiệp vụ User CRUD, Role CRUD, Permission Catalog, Site Catalog, Role Assignment, Invariant checks (GLOBAL `scopeId = null`, SITE `scopeId = valid site UUID`), và Last Active Global Super Admin Protection (chặn self-deactivation và chặn xóa assignment cuối cùng).
+- `apps/api/src/app.ts`: Đăng ký 14 REST endpoints cho User Management, Role Management, và Assignment Management được bảo vệ bởi `requirePermission` preHandlers (`users.read`, `users.create`, `users.update`, `users.deactivate`, `roles.read`, `roles.manage`, `roles.assign`, `sites.read`).
+- `apps/admin/app/users/page.tsx` (NEW): Admin Users management page (bảng danh sách, tìm kiếm, phân trang, modal tạo user, deactivate action, modal quản lý Role Assignments với scope selector và dropdown danh sách site thật).
+- `apps/admin/app/roles/page.tsx` (NEW): Admin Roles management page (danh sách roles, system role badge, modal tạo custom role, modal ma trận permission theo từng module).
+- `apps/admin/app/page.tsx`: Cập nhật dashboard với thanh điều hướng top navigation kết nối Dashboard, Users, Roles.
+- `packages/database/src/database.integration.test.ts`: Bổ sung test suite thứ 4 kiểm thử toàn diện 14 REST APIs, User deactivation session revocation, password change session revocation, GLOBAL/SITE invariants, duplicate assignment rejection (409), Last Super Admin deactivation protection (400), Last Super Admin assignment removal protection (400), và system role permission protection.
+
+**Commands:**
+- `pnpm lint` -> PASS (0 errors, 0 warnings)
+- `pnpm typecheck` -> PASS (9 Turbo tasks across all packages)
+- `pnpm test` -> PASS (17 unit tests across 3 suites)
+- `pnpm build` -> PASS (6 Turbo tasks; Next.js static pages `/`, `/_not-found`, `/login`, `/roles`, `/users` generated)
+- `TEST_DATABASE_URL=.../m24_clean_verify_db pnpm test:integration` -> PASS (4 suites against real PostgreSQL 16)
+- `pnpm test:smoke` -> PASS (API readiness/liveness, web and admin HTTP 200)
+
+**Resulting status:**
+- M2.4 Backend API & Invariants: `VERIFIED`
+- M2.4 Admin UI build: `PASS`
+- M2.4 Browser runtime: `NOT RUN / READY_FOR_TEST`
+- Overall M2: `READY_FOR_TEST` (Pending browser runtime)
+**Next exact task:** M3 — CMS Core (Content Types & Dynamic Content Engine).
+
+
 
 

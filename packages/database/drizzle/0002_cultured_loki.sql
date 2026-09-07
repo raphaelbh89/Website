@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "user_role_assignments_unique_idx" ON "user_role_assignments" USING btree ("user_id","role_id","scope_kind","scope_id") NULLS NOT DISTINCT;

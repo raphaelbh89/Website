@@ -15,6 +15,13 @@
       "when": 1788743134860,
       "tag": "0001_milky_roland_deschain",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788745685369,
+      "tag": "0002_cultured_loki",
+      "breakpoints": true
     }
   ]
 }

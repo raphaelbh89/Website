@@ -6,43 +6,42 @@
 
 ### Session State
 
-- Current milestone: M2 IN_PROGRESS (M2.1 Identity Schema & Persistence `VERIFIED` [commit `a7b5a2d`]; M2.2 Auth Vertical Slice `READY_FOR_TEST` [API/DB Verified, Browser Runtime Not Run]; M2.3 Scoped Authorization Guards `VERIFIED` [ready to commit]; M2.4 Admin User/Role Management `TODO`).
-- Working tree: All M2.2 security hardening and M2.3 scoped authorization guard code implemented and verified across 17 unit tests, 3 integration test suites, production build, and smoke tests.
+- Current milestone: M2 COMPLETED (Backend VERIFIED; Admin UI Build PASS; Browser Runtime NOT RUN). Overall M2 is `READY_FOR_TEST` per `DEFINITION_OF_DONE.md`.
+- Next milestone: **`M3 — CMS Core (Content Types & Dynamic Content Engine)`**.
+- Working tree: Full M2.4 User Management, Role Management, and Role Assignment APIs, Invariants, Last Super Admin Protection, Next.js Admin UI, and PostgreSQL 16 clean DB integration tests verified.
 
 ### Completed
 
-- Baseline commit `9294b50` and M2.1 commit `a7b5a2d` pushed to GitHub remote `origin/main`.
-- Vertical slice M2.2 Authentication & Security Hardening:
-  - Added `@fastify/cookie`, `@fastify/cors`, `@fastify/rate-limit`, `drizzle-orm`, `@platform/auth` to `apps/api`.
-  - Added `COOKIE_SECRET` (with production rejection of default secret) and `CORS_ORIGIN` to `@platform/config`.
-  - Added cookie constants `SESSION_COOKIE_NAME`, `SESSION_COOKIE_NAME_PROD`, `getSessionCookieName` to `@platform/auth`.
-  - Implemented `AuthService` in `apps/api/src/auth.service.ts` with Argon2id password verification, SHA-256 session token hashing, absolute 7d expiry, idle 24h timeout, rolling activity updates (15m interval), instant session revocation, and generic 401 errors.
-  - Implemented CSRF & Origin protection: strict Origin/Referer matching against allowed CORS origins, non-JSON Content-Type rejection (415), safe GET exemption, and Bearer token client compatibility.
-  - Implemented brute-force login rate limiting with `IP + normalized email` bucket keys (5/min).
-  - Implemented Admin Login UI in `apps/admin/app/login/page.tsx` and Protected Dashboard in `apps/admin/app/page.tsx`.
-  - Implemented Admin Bootstrap CLI in `packages/database/src/cli.ts` via `pnpm auth:bootstrap-admin`.
-- Vertical slice M2.3 Scoped Authorization Guards:
-  - Implemented `apps/api/src/auth.guard.ts` with `requireAuthentication` and `requirePermission(permission, scopeResolver)` preHandler hooks.
-  - Verified allow-list, deny-by-default, and hierarchical RBAC evaluation (`GLOBAL` and `SITE` scopes).
-  - Implemented and verified proof routes `GET /admin/proof` (GLOBAL scope, `users.read`) and `GET /sites/:siteId/proof` (SITE scope, `sites.read`).
-  - Proved site isolation (Site A grant accesses Site A, denied on Site B with 403 Forbidden).
-  - Proved authentication (401) vs authorization (403) distinct status codes.
-  - Verified production cookie attributes (`__Host-platform_session`, `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`, no `Domain`).
+- Baseline commit `9294b50`, M2.1 commit `a7b5a2d`, M2.2 hardening commit `37382a0`, and M2.3 commit `d0a7782` pushed to `origin/main`.
+- Vertical slice M2.4 Admin User & Role Management:
+  - Database unique index migration `0002_cultured_loki.sql` on `user_role_assignments(user_id, role_id, scope_kind, scope_id) NULLS NOT DISTINCT`.
+  - Implemented `AdminService` in `apps/api/src/admin.service.ts` handling Users CRUD, Roles CRUD, Permissions catalog, Sites catalog, Role assignments, and Last Active Global Super Admin protection.
+  - Implemented 14 REST API endpoints in Fastify (`apps/api/src/app.ts`) protected by Scoped RBAC preHandlers (`users.read`, `users.create`, `users.update`, `users.deactivate`, `roles.read`, `roles.manage`, `roles.assign`, `sites.read`).
+  - Enforced business invariants:
+    - GLOBAL scope requires `scope_id = NULL` (rejects non-null).
+    - SITE scope requires valid existing site UUID from `sites` table.
+    - Duplicate role assignment prevention via DB index and application validation (409 Conflict).
+    - Last Active Global Super Admin Protection: rejects self-deactivation (400) and rejects deleting last super admin role assignment (400).
+    - User password change or deactivation revokes all active sessions for that user immediately in DB.
+    - System role `system_super_admin` protected from being stripped of system permissions.
+  - Implemented Admin UI in Next.js (`apps/admin`):
+    - `/users`: paginated user table, search, status badge, create user modal, deactivate action, and manage role assignments modal with scope selector and real site dropdown from DB.
+    - `/roles`: role list, system role badge, create custom role modal, permission matrix modal grouped by module.
+    - Top navigation links (`Dashboard`, `Users`, `Roles`).
+  - Added test suite 4 to `packages/database/src/database.integration.test.ts` verifying all 14 REST endpoints, invariants, session invalidation, and protections against real PostgreSQL 16 clean database.
 
 ### Not Started
 
-- M2.4: Admin User and Role management CRUD API & UI.
-- M3: CMS Core (Content types, entries, schema engine).
+- M3: CMS Core (Content types schema engine, dynamic fields, entries, versioning, revisions).
 - Hosted CI execution on GitHub Actions.
-- Browser automation flow verification (Playwright download returned 404 in current environment).
+- Browser automation flow verification (Playwright binary download returned 404 in current environment).
 
 ### Next Recommended Actions
 
-1. Commit M2.2 hardening and M2.3 work:
-   - `fix(auth): harden session lifecycle, csrf verification and rate limiting`
-   - `feat(authz): implement M2.3 scoped authorization guards and proof endpoints`
+1. Commit M2.4 changes:
+   - `feat(identity): implement M2.4 admin user role management and invariants`
 2. Push commits to `origin/main`.
-3. Proceed to milestone M2.4: Admin User & Role Management.
+3. Proceed to milestone **`M3 — CMS Core`**.
 
 ## Template cho handoff sau này
 

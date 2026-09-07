@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid, boolean, primaryKey, index } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, uuid, boolean, primaryKey, index, uniqueIndex } from 'drizzle-orm/pg-core';
 import { v7 } from 'uuid';
 
 export const sites = pgTable('sites', {
@@ -72,4 +72,10 @@ export const userRoleAssignments = pgTable('user_role_assignments', {
   index('user_role_assignments_user_id_idx').on(table.userId),
   index('user_role_assignments_role_id_idx').on(table.roleId),
   index('user_role_assignments_scope_idx').on(table.scopeKind, table.scopeId),
+  uniqueIndex('user_role_assignments_unique_idx').on(
+    table.userId,
+    table.roleId,
+    table.scopeKind,
+    table.scopeId
+  ),
 ]);

@@ -219,4 +219,59 @@ Browser responsive/visual verification and hosted CI have not run. PostgreSQL po
 
 **Status for Slice M2.3**: **VERIFIED**
 
+---
+
+### TR-20260907-M2-4 — Admin User & Role Management
+
+- Date/Time: 2026-09-07T08:53:00+07:00
+- Environment: Windows, Node 24.18.0, pnpm 11.17.0, PostgreSQL 16.14 portable (`127.0.0.1:55432`).
+- Target Branch: `main`
+
+**Executed checks**:
+1. User Management REST APIs:
+   - `GET /users`: Paginated, search by email/name, filter by `isActive`, deterministic ordering (`created_at DESC`), no sensitive secrets leaked (`password_hash`, `token_hash` omitted). Guarded by `users.read`.
+   - `POST /users`: Normalized unique email, Argon2id password hashing, duplicate email returns `409 Conflict`, missing/invalid fields return `400 Bad Request`. Guarded by `users.create`.
+   - `GET /users/:id`: Returns clean user summary. Guarded by `users.read`.
+   - `PATCH /users/:id`: Updates name, email, active status, password. If password changes, existing sessions are revoked immediately in DB. Guarded by `users.update`.
+   - `POST /users/:id/deactivate`: Sets `is_active = false` and deletes all active sessions for that user. Guarded by `users.deactivate`.
+2. Role Management REST APIs:
+   - `GET /roles`: Lists all roles with attached permissions. Guarded by `roles.read`.
+   - `POST /roles`: Creates custom role with validated permissions. Duplicate key returns `409 Conflict`. Guarded by `roles.manage`.
+   - `GET /roles/:id`: Returns role detail with permissions list. Guarded by `roles.read`.
+   - `PATCH /roles/:id`: Updates role name/description. Guarded by `roles.manage`.
+   - `PUT /roles/:id/permissions`: Replaces attached permissions with exact validated keys. System role `system_super_admin` is protected from being stripped of system permissions. Guarded by `roles.manage`.
+   - `GET /permissions`: Lists catalog of available system permissions grouped by module. Guarded by `roles.read`.
+   - `GET /sites`: Lists sites for scope selection. Guarded by `sites.read`.
+3. Role Assignment REST APIs & Business Invariants:
+   - `GET /users/:id/roles`: Returns active role assignments with scope details and site names. Guarded by `roles.assign`.
+   - `POST /users/:id/roles`: Assigns role to user under `GLOBAL` or `SITE` scope. Guarded by `roles.assign`.
+     - `GLOBAL` Invariant: Enforces `scope_id = NULL`. Non-null `scope_id` is rejected with `400 Bad Request`.
+     - `SITE` Invariant: Enforces `scope_id` must be an existing valid site UUID in `sites` table. Nonexistent site rejected with `400 Bad Request`.
+     - Duplicate Assignment Invariant: Enforces `(user_id, role_id, scope_kind, scope_id)` uniqueness via DB index `user_role_assignments_unique_idx NULLS NOT DISTINCT` + application check. Returns `409 Conflict`.
+   - `DELETE /users/:id/roles/:assignmentId`: Removes role assignment. Guarded by `roles.assign`.
+4. Protection of Last Administrative Access:
+   - Self-deactivation of the last active global super admin is rejected with `400 Bad Request` (`Cannot deactivate the last active global system super admin`).
+   - Removal/deletion of the last active global super admin assignment is rejected with `400 Bad Request` (`Cannot remove the last active global system super admin assignment`).
+5. Admin UI Implementation (`apps/admin`):
+   - `/users`: User listing table, search filter, pagination controls, status badge, create user modal, deactivate confirmation, manage role assignments modal with scope selector and live site dropdown from DB.
+   - `/roles`: Role listing table, system role badge, create custom role modal, permission matrix modal grouped by module.
+   - Top navigation tabs: `Dashboard`, `Users`, `Roles`.
+   - Cookie-based HttpOnly session used (no tokens in `localStorage`/`sessionStorage`).
+6. Automated Verification Pipeline:
+   - `pnpm lint`: PASS (0 errors, 0 warnings).
+   - `pnpm typecheck`: PASS (9 Turbo tasks across all packages).
+   - `pnpm test`: PASS (17 unit tests).
+   - `pnpm build`: PASS (6 Turbo tasks; Next.js routes `/`, `/_not-found`, `/login`, `/roles`, `/users` prerendered statically).
+   - `pnpm test:integration`: PASS (4 full suites on PostgreSQL 16 clean DB `m24_clean_verify_db`).
+   - `pnpm test:smoke`: PASS (Production Fastify readiness, unavailable DB 503, web and admin HTTP 200).
+
+**Component Status Breakdown**:
+- `M2.4 Admin User & Role APIs`: **VERIFIED**
+- `M2.4 Database Schema & Invariants (0002_cultured_loki.sql)`: **VERIFIED**
+- `M2.4 Admin UI build`: **PASS**
+- `M2.4 Browser runtime flow`: **NOT RUN / READY_FOR_TEST**
+  - Reason: Browser test runner binary download unavailable in local environment; API and UI build fully verified.
+- Overall M2 Status: **READY_FOR_TEST** (pending browser runtime verification per `DEFINITION_OF_DONE.md`).
+
+
 

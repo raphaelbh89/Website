@@ -1,5 +1,5 @@
 import { afterAll, expect, it } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { eq, and, ne, sql } from 'drizzle-orm';
 import {
   createDatabase,
   migrateDatabase,
@@ -735,5 +735,411 @@ it('verifies production cookie attributes, session lifecycle (absolute expiry, i
     expect(bearerProof.statusCode).toBe(200);
   } finally {
     await prodApp.close();
+  }
+}, 30000);
+
+it('verifies M2.4 Admin User Management, Role Management, Role Assignments, Invariants, and Last Super Admin Protection against PostgreSQL 16', async () => {
+  const app = buildApp({
+    checkDatabase: async () => {},
+    database,
+    nodeEnv: 'development',
+    corsOrigin: 'http://localhost:3001',
+  });
+  await app.ready();
+
+  try {
+    const cookieName = getSessionCookieName(false);
+    const password = 'SuperSecretAdmin123!';
+    const passwordHash = await hashPassword(password);
+
+    // 1. Create Super Admin user with system_super_admin role
+    const [superAdmin] = await database.db
+      .insert(users)
+      .values({
+        email: 'm24_superadmin@example.com',
+        name: 'M24 Super Admin',
+        passwordHash,
+        isActive: true,
+      })
+      .returning();
+
+    const superAdminRole = await database.db.query.roles.findFirst({
+      where: (r, { eq: eqOp }) => eqOp(r.key, 'system_super_admin'),
+    });
+    expect(superAdminRole).toBeDefined();
+
+    const [superAdminAssignment] = await database.db
+      .insert(userRoleAssignments)
+      .values({
+        userId: superAdmin.id,
+        roleId: superAdminRole!.id,
+        scopeKind: 'global',
+        scopeId: null,
+      })
+      .returning();
+
+    // Login superAdmin
+    const adminLoginRes = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: { 'content-type': 'application/json' },
+      payload: { email: 'm24_superadmin@example.com', password },
+    });
+    expect(adminLoginRes.statusCode).toBe(200);
+    const adminToken = adminLoginRes.json().token;
+    const adminCookies = { [cookieName]: adminToken };
+
+    // Create a Viewer user with users.read only
+    const [viewerUser] = await database.db
+      .insert(users)
+      .values({
+        email: 'm24_viewer@example.com',
+        name: 'M24 Viewer',
+        passwordHash,
+        isActive: true,
+      })
+      .returning();
+
+    const usersReadPerm = await database.db.query.permissions.findFirst({
+      where: (p, { eq: eqOp }) => eqOp(p.key, 'users.read'),
+    });
+    expect(usersReadPerm).toBeDefined();
+
+    const [viewerRole] = await database.db
+      .insert(roles)
+      .values({
+        key: 'm24_viewer_role',
+        name: 'M24 Viewer Role',
+        isSystem: false,
+      })
+      .returning();
+
+    await database.db.insert(rolePermissions).values({
+      roleId: viewerRole.id,
+      permissionId: usersReadPerm!.id,
+    });
+
+    await database.db.insert(userRoleAssignments).values({
+      userId: viewerUser.id,
+      roleId: viewerRole.id,
+      scopeKind: 'global',
+      scopeId: null,
+    });
+
+    const viewerLoginRes = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: { 'content-type': 'application/json' },
+      payload: { email: 'm24_viewer@example.com', password },
+    });
+    const viewerToken = viewerLoginRes.json().token;
+    const viewerCookies = { [cookieName]: viewerToken };
+
+    // --- A. User Management Tests ---
+
+    // 1. GET /users: viewer can list users
+    const listUsersRes = await app.inject({
+      method: 'GET',
+      url: '/users?page=1&limit=10&search=m24',
+      cookies: viewerCookies,
+    });
+    expect(listUsersRes.statusCode).toBe(200);
+    const usersBody = listUsersRes.json();
+    expect(usersBody.items.length).toBeGreaterThanOrEqual(2);
+    expect(usersBody.total).toBeGreaterThanOrEqual(2);
+    expect(usersBody.items[0].passwordHash).toBeUndefined();
+
+    // 2. POST /users: viewer lacks users.create -> 403 Forbidden
+    const viewerCreateUserRes = await app.inject({
+      method: 'POST',
+      url: '/users',
+      headers: { 'content-type': 'application/json' },
+      cookies: viewerCookies,
+      payload: {
+        email: 'new_operator@example.com',
+        name: 'New Operator',
+        password: 'Password123!',
+      },
+    });
+    expect(viewerCreateUserRes.statusCode).toBe(403);
+
+    // 3. POST /users: admin creates user -> 201 Created
+    const adminCreateUserRes = await app.inject({
+      method: 'POST',
+      url: '/users',
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        email: '  NEW_OPERATOR@Example.Com  ',
+        name: 'New Operator',
+        password: 'Password123!',
+      },
+    });
+    expect(adminCreateUserRes.statusCode).toBe(201);
+    const createdUser = adminCreateUserRes.json().user;
+    expect(createdUser.email).toBe('new_operator@example.com');
+    expect(createdUser.name).toBe('New Operator');
+    expect(createdUser.isActive).toBe(true);
+
+    // 4. POST /users: duplicate email -> 409 Conflict
+    const duplicateUserRes = await app.inject({
+      method: 'POST',
+      url: '/users',
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        email: 'new_operator@example.com',
+        name: 'Duplicate',
+        password: 'Password123!',
+      },
+    });
+    expect(duplicateUserRes.statusCode).toBe(409);
+
+    // 5. GET /users/:id: get user details
+    const getUserRes = await app.inject({
+      method: 'GET',
+      url: `/users/${createdUser.id}`,
+      cookies: adminCookies,
+    });
+    expect(getUserRes.statusCode).toBe(200);
+    expect(getUserRes.json().user.id).toBe(createdUser.id);
+
+    // 6. PATCH /users/:id: update user details and change password
+    const updateRes = await app.inject({
+      method: 'PATCH',
+      url: `/users/${createdUser.id}`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        name: 'Updated Operator Name',
+        password: 'NewOperatorPassword123!',
+      },
+    });
+    expect(updateRes.statusCode).toBe(200);
+    expect(updateRes.json().user.name).toBe('Updated Operator Name');
+
+    // 7. Verify new password works for login
+    const newLoginRes = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: { 'content-type': 'application/json' },
+      payload: { email: 'new_operator@example.com', password: 'NewOperatorPassword123!' },
+    });
+    expect(newLoginRes.statusCode).toBe(200);
+    const operatorToken = newLoginRes.json().token;
+
+    // 8. POST /users/:id/deactivate: deactivates user and terminates sessions
+    const deactivateRes = await app.inject({
+      method: 'POST',
+      url: `/users/${createdUser.id}/deactivate`,
+      cookies: adminCookies,
+    });
+    expect(deactivateRes.statusCode).toBe(200);
+    expect(deactivateRes.json().user.isActive).toBe(false);
+
+    // Verify session for deactivated user is now rejected
+    const testDeactivatedSessionRes = await app.inject({
+      method: 'GET',
+      url: '/auth/me',
+      cookies: { [cookieName]: operatorToken },
+    });
+    expect(testDeactivatedSessionRes.statusCode).toBe(401);
+
+    // 9. Last Super Admin Protection on User Deactivation:
+    // Deactivate all other global super admins from earlier test suites so superAdmin is the sole active one
+    const allOtherSuperAdmins = await database.db
+      .select({ userId: userRoleAssignments.userId })
+      .from(userRoleAssignments)
+      .innerJoin(roles, eq(userRoleAssignments.roleId, roles.id))
+      .where(
+        and(
+          eq(roles.key, 'system_super_admin'),
+          eq(userRoleAssignments.scopeKind, 'global'),
+          sql`${userRoleAssignments.scopeId} IS NULL`,
+          ne(userRoleAssignments.userId, superAdmin.id)
+        )
+      );
+    for (const osa of allOtherSuperAdmins) {
+      await database.db
+        .update(users)
+        .set({ isActive: false })
+        .where(eq(users.id, osa.userId));
+    }
+
+    // Now attempting to deactivate superAdmin (the ONLY active global super admin) must be rejected with 400!
+    const selfDeactivateRes = await app.inject({
+      method: 'POST',
+      url: `/users/${superAdmin.id}/deactivate`,
+      cookies: adminCookies,
+    });
+    expect(selfDeactivateRes.statusCode).toBe(400);
+    expect(selfDeactivateRes.json().message).toContain('last active global system super admin');
+
+    // --- B. Role Management Tests ---
+
+    // 1. GET /roles: list roles with permissions
+    const listRolesRes = await app.inject({
+      method: 'GET',
+      url: '/roles',
+      cookies: adminCookies,
+    });
+    expect(listRolesRes.statusCode).toBe(200);
+    const rolesList = listRolesRes.json().roles;
+    expect(rolesList.some((r: { key: string }) => r.key === 'system_super_admin')).toBe(true);
+
+    // 2. POST /roles: create custom role
+    const createRoleRes = await app.inject({
+      method: 'POST',
+      url: '/roles',
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        key: 'content_moderator',
+        name: 'Content Moderator',
+        description: 'Moderates public articles and media',
+        permissions: ['content.read', 'content.update'],
+      },
+    });
+    expect(createRoleRes.statusCode).toBe(201);
+    const createdRole = createRoleRes.json().role;
+    expect(createdRole.key).toBe('content_moderator');
+    expect(createdRole.permissions).toEqual(['content.read', 'content.update']);
+
+    // 3. POST /roles with invalid permission key -> 400 Bad Request
+    const invalidPermRoleRes = await app.inject({
+      method: 'POST',
+      url: '/roles',
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        key: 'invalid_role',
+        name: 'Invalid Role',
+        permissions: ['nonexistent.permission.key'],
+      },
+    });
+    expect(invalidPermRoleRes.statusCode).toBe(400);
+
+    // 4. PUT /roles/:id/permissions: update custom role permissions
+    const updatePermsRes = await app.inject({
+      method: 'PUT',
+      url: `/roles/${createdRole.id}/permissions`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        permissions: ['content.read', 'content.update', 'content.publish'],
+      },
+    });
+    expect(updatePermsRes.statusCode).toBe(200);
+    expect(updatePermsRes.json().role.permissions).toContain('content.publish');
+
+    // 5. System Role Protection: Cannot strip permissions from system_super_admin
+    const stripSuperAdminRes = await app.inject({
+      method: 'PUT',
+      url: `/roles/${superAdminRole!.id}/permissions`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        permissions: ['users.read'], // Trying to strip all other system permissions
+      },
+    });
+    expect(stripSuperAdminRes.statusCode).toBe(400);
+    expect(stripSuperAdminRes.json().message).toContain('Cannot remove system permissions from system_super_admin');
+
+    // --- C. Role Assignment Management Tests ---
+
+    const targetSite = (await database.db.select().from(sites))[0];
+    expect(targetSite).toBeDefined();
+
+    // 1. POST /users/:id/roles: assign SITE-scoped role to viewerUser
+    const assignSiteRoleRes = await app.inject({
+      method: 'POST',
+      url: `/users/${viewerUser.id}/roles`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        roleId: createdRole.id,
+        scopeKind: 'site',
+        scopeId: targetSite.id,
+      },
+    });
+    expect(assignSiteRoleRes.statusCode).toBe(201);
+    const siteAssignment = assignSiteRoleRes.json().assignment;
+    expect(siteAssignment.scopeKind).toBe('site');
+    expect(siteAssignment.scopeId).toBe(targetSite.id);
+
+    // 2. SITE Invariant Test: Reject nonexistent site
+    const invalidSiteAssignRes = await app.inject({
+      method: 'POST',
+      url: `/users/${viewerUser.id}/roles`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        roleId: createdRole.id,
+        scopeKind: 'site',
+        scopeId: '00000000-0000-0000-0000-000000000000',
+      },
+    });
+    expect(invalidSiteAssignRes.statusCode).toBe(400);
+    expect(invalidSiteAssignRes.json().message).toBe('Site does not exist');
+
+    // 3. GLOBAL Invariant Test: Reject GLOBAL with non-null scopeId
+    const invalidGlobalAssignRes = await app.inject({
+      method: 'POST',
+      url: `/users/${viewerUser.id}/roles`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        roleId: createdRole.id,
+        scopeKind: 'global',
+        scopeId: targetSite.id, // Illegal!
+      },
+    });
+    expect(invalidGlobalAssignRes.statusCode).toBe(400);
+    expect(invalidGlobalAssignRes.json().message).toBe('GLOBAL scope cannot have a scopeId');
+
+    // 4. Duplicate Assignment Test: Reject duplicate user + role + scope
+    const duplicateAssignRes = await app.inject({
+      method: 'POST',
+      url: `/users/${viewerUser.id}/roles`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        roleId: createdRole.id,
+        scopeKind: 'site',
+        scopeId: targetSite.id,
+      },
+    });
+    expect(duplicateAssignRes.statusCode).toBe(409);
+
+    // 5. GET /users/:id/roles: list user role assignments
+    const listAssignmentsRes = await app.inject({
+      method: 'GET',
+      url: `/users/${viewerUser.id}/roles`,
+      cookies: adminCookies,
+    });
+    expect(listAssignmentsRes.statusCode).toBe(200);
+    const userAssignmentsList = listAssignmentsRes.json().assignments;
+    expect(userAssignmentsList.length).toBeGreaterThanOrEqual(2);
+
+    // 6. Last Super Admin Protection on Assignment Deletion:
+    // Attempting to delete superAdminAssignment (the last active global super admin assignment) must be rejected with 400!
+    const deleteSuperAdminAssignRes = await app.inject({
+      method: 'DELETE',
+      url: `/users/${superAdmin.id}/roles/${superAdminAssignment.id}`,
+      cookies: adminCookies,
+    });
+    expect(deleteSuperAdminAssignRes.statusCode).toBe(400);
+    expect(deleteSuperAdminAssignRes.json().message).toContain('Cannot remove the last active global system super admin assignment');
+
+    // 7. DELETE /users/:id/roles/:assignmentId: successfully remove viewer's site assignment
+    const deleteViewerAssignRes = await app.inject({
+      method: 'DELETE',
+      url: `/users/${viewerUser.id}/roles/${siteAssignment.id}`,
+      cookies: adminCookies,
+    });
+    expect(deleteViewerAssignRes.statusCode).toBe(200);
+    expect(deleteViewerAssignRes.json()).toEqual({ status: 'ok' });
+  } finally {
+    await app.close();
   }
 }, 30000);

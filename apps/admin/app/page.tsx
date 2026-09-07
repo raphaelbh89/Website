@@ -20,6 +20,8 @@ interface AuthMeResponse {
   }>;
 }
 
+import Link from 'next/link';
+
 export default function ProtectedAdminDashboard() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -71,7 +73,14 @@ export default function ProtectedAdminDashboard() {
   }
 
   return (
-    <main style={{ maxWidth: 720, margin: '10vh auto', padding: 24, fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+    <main style={{ maxWidth: 760, margin: '5vh auto', padding: 24, fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+      {/* Navigation Header */}
+      <nav style={{ display: 'flex', gap: 16, borderBottom: '1px solid #e2e8f0', paddingBottom: 12, marginBottom: 24 }}>
+        <Link href="/" style={{ color: '#0f172a', textDecoration: 'none', fontWeight: 700, borderBottom: '2px solid #0f172a', paddingBottom: 10 }}>Dashboard</Link>
+        <Link href="/users" style={{ color: '#64748b', textDecoration: 'none', fontWeight: 500 }}>Users</Link>
+        <Link href="/roles" style={{ color: '#64748b', textDecoration: 'none', fontWeight: 500 }}>Roles & Permissions</Link>
+      </nav>
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0', paddingBottom: 16 }}>
         <div>
           <p style={{ margin: 0, fontSize: 13, color: '#64748b', fontWeight: 600 }}>M2 · Protected Admin</p>
@@ -102,13 +111,51 @@ export default function ProtectedAdminDashboard() {
           <p>Verifying authenticated session...</p>
         </div>
       ) : (
-        <div style={{ marginTop: 24, backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 20 }}>
-          <h2 style={{ margin: '0 0 12px 0', fontSize: 16, color: '#334155' }}>Authenticated User Information</h2>
-          <p style={{ margin: '6px 0', fontSize: 14 }}><strong>Name:</strong> {authData?.user.name}</p>
-          <p style={{ margin: '6px 0', fontSize: 14 }}><strong>Email:</strong> {authData?.user.email}</p>
-          <p style={{ margin: '6px 0', fontSize: 14 }}><strong>User ID:</strong> {authData?.user.id}</p>
-          <p style={{ margin: '6px 0', fontSize: 14 }}><strong>Session Expires At:</strong> {authData?.session.expiresAt}</p>
-          <p style={{ margin: '6px 0', fontSize: 14 }}><strong>Effective Grants Count:</strong> {authData?.grants.length}</p>
+        <div style={{ marginTop: 24 }}>
+          <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 20, marginBottom: 20 }}>
+            <h2 style={{ margin: '0 0 12px 0', fontSize: 16, color: '#334155' }}>Authenticated User Information</h2>
+            <p style={{ margin: '6px 0', fontSize: 14 }}><strong>Name:</strong> {authData?.user.name}</p>
+            <p style={{ margin: '6px 0', fontSize: 14 }}><strong>Email:</strong> {authData?.user.email}</p>
+            <p style={{ margin: '6px 0', fontSize: 14 }}><strong>User ID:</strong> {authData?.user.id}</p>
+            <p style={{ margin: '6px 0', fontSize: 14 }}><strong>Session Expires At:</strong> {authData?.session.expiresAt}</p>
+            <p style={{ margin: '6px 0', fontSize: 14 }}><strong>Effective Grants Count:</strong> {authData?.grants.length}</p>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
+            <Link
+              href="/users"
+              style={{
+                display: 'block',
+                padding: 16,
+                backgroundColor: '#ffffff',
+                border: '1px solid #e2e8f0',
+                borderRadius: 8,
+                textDecoration: 'none',
+                color: '#0f172a',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+              }}
+            >
+              <h3 style={{ margin: '0 0 6px 0', fontSize: 16 }}>Users & Assignments →</h3>
+              <p style={{ margin: 0, fontSize: 13, color: '#64748b' }}>Create users, manage status, and assign global/site roles.</p>
+            </Link>
+
+            <Link
+              href="/roles"
+              style={{
+                display: 'block',
+                padding: 16,
+                backgroundColor: '#ffffff',
+                border: '1px solid #e2e8f0',
+                borderRadius: 8,
+                textDecoration: 'none',
+                color: '#0f172a',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+              }}
+            >
+              <h3 style={{ margin: '0 0 6px 0', fontSize: 16 }}>Roles & Permissions →</h3>
+              <p style={{ margin: 0, fontSize: 13, color: '#64748b' }}>Configure custom roles and permission allow-lists.</p>
+            </Link>
+          </div>
         </div>
       )}
     </main>

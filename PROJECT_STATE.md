@@ -77,32 +77,37 @@ Content Type
 
 Multi-Agent orchestration based on persistent repo state. No dependency on a single chat session.
 
-## Decisions Finalized for M2
+## Decisions Finalized for M2 & M3
 
 - **ADR-0005 (Accepted)**: Server-side opaque session, `HttpOnly; Secure; SameSite=Lax` cookies, SHA-256 session token hashing in DB, Argon2id (`@node-rs/argon2`) password hashing with RFC 9106 recommended parameters, generic auth errors, rate limiting on login via `@fastify/rate-limit`, explicit CORS origin check with credentials.
-- **ADR-0006 (Accepted)**: Scoped RBAC architecture (`GLOBAL`, `SITE`, `CAMPUS`, `RESOURCE` hierarchy). Separation of User -> RoleAssignment -> Role -> RolePermission -> Permission. Implementation for M2 covers `GLOBAL` and `SITE` scopes with inheritance down to sites, explicit allow-list, deny-by-default, and structured permission names (`users.read`, `content.publish`, etc.).
+- **ADR-0006 (Accepted)**: Scoped RBAC architecture (`GLOBAL`, `SITE`, `CAMPUS`, `RESOURCE` hierarchy). Separation of User -> RoleAssignment -> Role -> RolePermission -> Permission. Implementation covers `GLOBAL` and `SITE` scopes with inheritance down to sites, explicit allow-list, deny-by-default, and structured permission names (`users.read`, `content.publish`, etc.).
+- **ADR-0007 (Accepted)**: CMS Content Engine Schema, Canonical Field Registry (M3.1 core: text, textarea, number, boolean, select; deferred media/relation/richtext/repeater), Internal CMS Field Schema (dataSchema vs uiSchema), and Revision-Pointer Model (`content_entries` with `current_revision_id` & `published_revision_id` pointers + `content_entry_revisions` immutable snapshots) with optimistic concurrency control (`expectedRevision` / 409 Conflict) and schema evolution policy.
+- **ADR-0008 (Accepted)**: Content Scoping, Routing, Localization Invariants, and Scoped Permissions. Enforces No-Shadowing rule between Site-specific and Global Content Types, deterministic type resolution, strict Multi-Site isolation, Singleton partial unique indexes, Translation Group invariants (`translation_group_id` cannot cross site/type; unique locale per group), and Scoped RBAC alignment (`content_types.*` global/site, `content.*` site-scoped).
 
 ## Decisions Not Yet Finalized (Deferred to later milestones)
 
 Các mục sau phải tạo ADR trước khi implement nếu chưa được chốt:
 
-- object storage provider (M4);
+- object storage provider & media library (M4);
+- visual editor library / Page Builder canvas (M5);
+- theme tokens & design system engine (M6);
+- localization routing & translation UI (M7);
 - cache provider (M9);
 - realtime/chat transport;
 - queue/background job technology;
-- visual editor library (M5);
-- e2e test framework;
+- e2e browser test harness;
 - deployment target.
 
 ## Current Risks
 
 1. Page Builder quá generic có thể gây schema phức tạp.
-2. Dynamic Content Type dễ biến database thành EAV/JSON dump nếu không giới hạn.
+2. Dynamic Content Type dễ biến database thành EAV/JSON dump nếu không giới hạn (đã chặn bằng ADR-0007 allow-list và revision-pointer model).
 3. AI-generated modules có nguy cơ tạo code không đồng nhất.
-4. Multi-language + localized slug cần thiết kế uniqueness cẩn thận.
-5. RBAC scope cần xác định global/site/campus/content scope ngay từ đầu.
+4. Multi-language + localized slug cần thiết kế uniqueness cẩn thận (đã đặc tả trong ADR-0008).
+5. RBAC scope cần xác định global/site/campus/content scope ngay từ đầu (đã đặc tả trong ADR-0006 và ADR-0008).
 
 ## Next Recommended Milestone
  
-Start **`M3 — Content Type & Dynamic Content Engine (CMS Core)`**: Schema and domain model for Content Types (JSON Schema definition, field types, validation rules), Content Entries (relational + JSONB payload, drafting/publishing status, revision tracking), and multi-site content isolation backed by PostgreSQL 16.
+Proceed to **`M3.1 Minimal Vertical Slice`** implementation upon plan approval (proving GLOBAL/SITE Content Types, schema validation, dynamic form renderer, draft revisions, atomic publishing, public published resolver, and scoped RBAC on clean PostgreSQL 16 DB).
+
 

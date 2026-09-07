@@ -13,7 +13,7 @@
 |---|---|---|---|---|---|
 | ARCH-001 | S2 | RESOLVED | Architecture | Framework/ORM pinned in ADR-0004; Auth/Session strategy finalized and accepted in ADR-0005 | Architect/Security |
 | ARCH-002 | S2 | RESOLVED | RBAC | Permission scope strategy finalized (GLOBAL/SITE/CAMPUS/RESOURCE) and accepted in ADR-0006 | Architect/Security |
-| ARCH-003 | S2 | OPEN | Page Builder | Cần giới hạn dynamic schema để tránh config trở thành untyped JSON dump | Architect |
+| ARCH-003 | S2 | RESOLVED | CMS Core | CMS Content Engine Schema, Canonical Field Registry allow-list, Data/UI schema separation, and Revision-Pointer model finalized and accepted in ADR-0007 & ADR-0008 | Architect/Backend |
 | ENV-M1-001 | S2 | RESOLVED | QA environment | Resolved locally via portable PostgreSQL 16 on 127.0.0.1:55432; independent verification rerun passed; see TR-20260907-M1-RERUN | Orchestrator/QA |
 
 ## Issue Template

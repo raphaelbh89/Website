@@ -6,13 +6,20 @@
 
 ### Session State
 
-- Current milestone: M2 COMPLETED (Backend VERIFIED; Admin UI Build PASS; Browser Runtime NOT RUN). Overall M2 is `READY_FOR_TEST` per `DEFINITION_OF_DONE.md`.
-- Next milestone: **`M3 — CMS Core (Content Types & Dynamic Content Engine)`**.
-- Working tree: Full M2.4 User Management, Role Management, and Role Assignment APIs, Invariants, Last Super Admin Protection, Next.js Admin UI, and PostgreSQL 16 clean DB integration tests verified.
+- M2 overall: `READY_FOR_TEST`
+- M2 backend/API/RBAC: `VERIFIED`
+- M2 Admin UI build: `PASS`
+- M2 Browser E2E: `NOT RUN`
+- M3 implementation: `NOT STARTED`
+- M3 architecture: `IN_PROGRESS`
+- Current commit: `61b91bd` (pushed to `origin/main`)
+- Working tree: Clean (verified with `git -c safe.directory=E:/WebstiteCMS status`)
 
 ### Completed
 
-- Baseline commit `9294b50`, M2.1 commit `a7b5a2d`, M2.2 hardening commit `37382a0`, and M2.3 commit `d0a7782` pushed to `origin/main`.
+- Baseline commit `9294b50`, M2.1 commit `a7b5a2d`, M2.2 hardening commit `37382a0`, M2.3 commit `d0a7782`, and M2.4 commit `61b91bd` pushed to `origin/main`.
+- Reverted global `safe.directory` git config; established command-scoped git flag policy.
+- Verified Drizzle schema integrity: 0 schema drift, 0 duplicate index generation, confirmed PostgreSQL 16 `NULLS NOT DISTINCT` unique index.
 - Vertical slice M2.4 Admin User & Role Management:
   - Database unique index migration `0002_cultured_loki.sql` on `user_role_assignments(user_id, role_id, scope_kind, scope_id) NULLS NOT DISTINCT`.
   - Implemented `AdminService` in `apps/api/src/admin.service.ts` handling Users CRUD, Roles CRUD, Permissions catalog, Sites catalog, Role assignments, and Last Active Global Super Admin protection.
@@ -32,16 +39,15 @@
 
 ### Not Started
 
-- M3: CMS Core (Content types schema engine, dynamic fields, entries, versioning, revisions).
+- M3 source implementation & migrations: NOT STARTED (Currently in Architecture Hardening & ADR phase).
 - Hosted CI execution on GitHub Actions.
-- Browser automation flow verification (Playwright binary download returned 404 in current environment).
+- Browser automation flow verification (Playwright binary package not part of workspace dependencies).
 
 ### Next Recommended Actions
 
-1. Commit M2.4 changes:
-   - `feat(identity): implement M2.4 admin user role management and invariants`
-2. Push commits to `origin/main`.
-3. Proceed to milestone **`M3 — CMS Core`**.
+1. Complete and approve ADR-0007 (CMS Content Engine Schema) and ADR-0008 (Content Scoping and Routing).
+2. Maintain M3 implementation as NOT STARTED until ADRs are fully accepted and reviewed.
+3. Once approved, plan the exact M3.1 minimal vertical slice.
 
 ## Template cho handoff sau này
 

@@ -245,7 +245,30 @@ No production/service installation; .local-postgres artifacts kept and ignored.
 - M2.4 Admin UI build: `PASS`
 - M2.4 Browser runtime: `NOT RUN / READY_FOR_TEST`
 - Overall M2: `READY_FOR_TEST` (Pending browser runtime)
-**Next exact task:** M3 — CMS Core (Content Types & Dynamic Content Engine).
+**Next exact task:** M3 — CMS Core Architecture Hardening & ADRs.
+
+---
+
+## 2026-09-07 09:14 — M3 CMS Core Architecture Hardening & ADRs Finalized
+
+**Agent/Role:** Lead Architect / Backend Lead / Security Lead
+**Task:** Hoàn tất Architecture Hardening cho CMS Core, hoàn thiện và chấp nhận `ADR-0007` (CMS Content Engine Schema, Canonical Field Registry, Data/UI Schema Separation, Revision-Pointer Model, Optimistic Concurrency) và `ADR-0008` (Content Scoping, No-Shadowing Rule, Multi-site Isolation, Singleton Semantics, Translation Group Invariants, Scoped Permissions). Revert global safe.directory và kiểm tra migration integrity (0 drift).
+
+**Files changed / created:**
+- `docs/adr/0007-cms-content-engine-schema.md` (NEW): Quyết định kiến trúc Revision-Pointer Model (`current_revision_id` vs `published_revision_id`), Allow-list Field Registry (M3.1 core: text, textarea, number, boolean, select; deferred media, relation, richtext, repeater), ReDoS protection, Optimistic Concurrency (`409 Conflict`), Schema Evolution (`schema_version`), và JSONB indexing.
+- `docs/adr/0008-content-scoping-and-routing.md` (NEW): Quyết định kiến trúc Content Scoping, quy tắc No-Shadowing giữa Site-specific và Global Content Types, deterministic resolution, Single vs Collection semantics, Translation Group invariants (`translation_group_id` không vượt site/type; duy nhất ngôn ngữ trong group), và Scoped RBAC alignment.
+- `HANDOFF.md`, `PROJECT_STATE.md`, `ISSUES.md`: Chuẩn hóa trạng thái M2 (READY_FOR_TEST), M3 (ARCHITECTURE_HARDENING_COMPLETED / PLANNING), và cập nhật các quyết định đã chốt.
+
+**Commands:**
+- `git config --global --unset-all safe.directory E:/WebstiteCMS` -> PASS
+- `pnpm --filter @platform/database generate` -> PASS (0 schema drift)
+- `drizzle index check on clean PostgreSQL 16 DB` -> PASS (`user_role_assignments_unique_idx NULLS NOT DISTINCT` verified)
+
+**Resulting status:**
+- M2 overall: `READY_FOR_TEST` (Backend VERIFIED, Admin UI Build PASS, Browser Runtime NOT RUN)
+- M3 status: `ARCHITECTURE_HARDENING_COMPLETED` (ADR-0007 & ADR-0008 ACCEPTED; Source Implementation NOT STARTED)
+**Next exact task:** M3.1 Minimal Vertical Slice Plan Approval.
+
 
 
 

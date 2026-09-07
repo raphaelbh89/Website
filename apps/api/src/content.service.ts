@@ -508,6 +508,7 @@ export class ContentService {
       slug?: string;
       locale?: string;
       data: Record<string, unknown>;
+      taxonomyAssignments?: Record<string, string[]>;
     },
     userId?: string
   ): Promise<{ entry?: Record<string, unknown>; revision?: Record<string, unknown>; error?: string; status?: number }> {
@@ -516,10 +517,11 @@ export class ContentService {
       return { error: typeRes.error || 'Content type not found', status: typeRes.status || 404 };
     }
     const contentType = typeRes.contentType;
-    if (!data.locale || !isValidLocale(data.locale)) {
+    const targetLocale = data.locale ? data.locale : 'vi';
+    if (!isValidLocale(targetLocale)) {
       return { error: `Invalid locale "${data.locale || ''}". Must be a valid BCP-47 tag (e.g. "vi", "en", "zh-CN")`, status: 400 };
     }
-    const locale = normalizeLocale(data.locale);
+    const locale = normalizeLocale(targetLocale);
 
     if (!data.title?.trim()) {
       return { error: 'Entry title is required', status: 400 };
@@ -560,6 +562,18 @@ export class ContentService {
         }
       }
 
+      // Validate taxonomy bindings if taxonomyAssignments provided or if required bindings exist
+      const taxonomyTermsToInsert = await this.validateTaxonomyAssignments(
+        client,
+        siteId,
+        contentType.id,
+        data.taxonomyAssignments || {}
+      );
+      if (taxonomyTermsToInsert.error) {
+        await client.query('ROLLBACK');
+        return { error: taxonomyTermsToInsert.error, status: 400 };
+      }
+
       // 1. Insert content_entries (with pointers NULL initially)
       const entryRes = await client.query(
         `INSERT INTO content_entries (
@@ -587,7 +601,18 @@ export class ContentService {
       );
       const newRevision = revRes.rows[0];
 
-      // 3. Update current_revision_id pointer
+      // 3. Insert content_revision_terms
+      if (taxonomyTermsToInsert.termIds && taxonomyTermsToInsert.termIds.length > 0) {
+        for (let i = 0; i < taxonomyTermsToInsert.termIds.length; i++) {
+          await client.query(
+            `INSERT INTO content_revision_terms (revision_id, taxonomy_term_id, sort_order)
+             VALUES ($1, $2, $3)`,
+            [newRevision.id, taxonomyTermsToInsert.termIds[i], i]
+          );
+        }
+      }
+
+      // 4. Update current_revision_id pointer
       await client.query(
         'UPDATE content_entries SET current_revision_id = $1, updated_at = NOW() WHERE id = $2',
         [newRevision.id, newEntry.id]
@@ -620,6 +645,7 @@ export class ContentService {
       title?: string;
       slug?: string;
       data?: Record<string, unknown>;
+      taxonomyAssignments?: Record<string, string[]>;
     },
     userId?: string
   ): Promise<{ entry?: Record<string, unknown>; revision?: Record<string, unknown>; error?: string; status?: number }> {
@@ -686,6 +712,32 @@ export class ContentService {
         return { error: dataValidation.error || 'Invalid content data', status: 400 };
       }
 
+      // Determine term IDs to assign to new revision:
+      // If taxonomyAssignments is supplied -> validate and use supplied snapshot
+      // If taxonomyAssignments is omitted -> copy forward existing terms from currentRev
+      let termIdsToAssign: string[] = [];
+
+      if (data.taxonomyAssignments !== undefined) {
+        const validated = await this.validateTaxonomyAssignments(
+          client,
+          siteId,
+          contentType.id,
+          data.taxonomyAssignments
+        );
+        if (validated.error) {
+          await client.query('ROLLBACK');
+          return { error: validated.error, status: 400 };
+        }
+        termIdsToAssign = validated.termIds || [];
+      } else if (currentRev) {
+        // Copy-forward existing terms from previous revision
+        const existingTermsRes = await client.query(
+          'SELECT taxonomy_term_id FROM content_revision_terms WHERE revision_id = $1 ORDER BY sort_order ASC',
+          [currentRev.id]
+        );
+        termIdsToAssign = existingTermsRes.rows.map((r) => r.taxonomy_term_id);
+      }
+
       // 3. INSERT new immutable revision
       const newRevRes = await client.query(
         `INSERT INTO content_entry_revisions (
@@ -704,7 +756,18 @@ export class ContentService {
       );
       const newRevision = newRevRes.rows[0];
 
-      // 4. UPDATE content_entries current_revision_id pointer (published_revision_id remains unchanged!)
+      // 4. INSERT content_revision_terms for new revision
+      if (termIdsToAssign.length > 0) {
+        for (let i = 0; i < termIdsToAssign.length; i++) {
+          await client.query(
+            `INSERT INTO content_revision_terms (revision_id, taxonomy_term_id, sort_order)
+             VALUES ($1, $2, $3)`,
+            [newRevision.id, termIdsToAssign[i], i]
+          );
+        }
+      }
+
+      // 5. UPDATE content_entries current_revision_id pointer (published_revision_id remains unchanged!)
       const updatedEntryRes = await client.query(
         `UPDATE content_entries SET current_revision_id = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
         [newRevision.id, entry.id]
@@ -722,6 +785,94 @@ export class ContentService {
     } finally {
       client.release();
     }
+  }
+
+  private async validateTaxonomyAssignments(
+    client: { query: (q: string, p?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }> },
+    siteId: string,
+    contentTypeId: string,
+    assignments: Record<string, string[]>
+  ): Promise<{ termIds?: string[]; error?: string }> {
+    // 1. Load active taxonomy bindings for ContentType
+    const bindingsRes = await client.query(
+      `SELECT ctt.*, t.key as tax_key, t.name as tax_name, t.is_active as tax_is_active
+       FROM content_type_taxonomies ctt
+       JOIN taxonomies t ON t.id = ctt.taxonomy_id
+       WHERE ctt.content_type_id = $1`,
+      [contentTypeId]
+    );
+    const bindings = bindingsRes.rows;
+    const bindingMap = new Map<string, Record<string, unknown>>();
+    for (const b of bindings) {
+      bindingMap.set(b.tax_key as string, b);
+    }
+
+    // Check if client provided taxonomies not bound to ContentType
+    for (const taxKey of Object.keys(assignments)) {
+      if (!bindingMap.has(taxKey)) {
+        return { error: `Taxonomy "${taxKey}" is not attached to this content type` };
+      }
+    }
+
+    const collectedTermIds: string[] = [];
+    const seenTermIds = new Set<string>();
+
+    for (const b of bindings) {
+      const taxKey = b.tax_key as string;
+      const termsForTax = assignments[taxKey] || [];
+
+      // Check required & min/max constraints
+      const isRequired = Boolean(b.is_required);
+      const minTerms = Number(b.min_terms || 0);
+      const maxTerms = b.max_terms !== null && b.max_terms !== undefined ? Number(b.max_terms) : null;
+
+      if (isRequired && termsForTax.length === 0) {
+        return { error: `Taxonomy "${taxKey}" is required and must have at least 1 term assigned` };
+      }
+      if (termsForTax.length < minTerms) {
+        return { error: `Taxonomy "${taxKey}" requires at least ${minTerms} term(s) (received ${termsForTax.length})` };
+      }
+      if (maxTerms !== null && termsForTax.length > maxTerms) {
+        return { error: `Taxonomy "${taxKey}" allows at most ${maxTerms} term(s) (received ${termsForTax.length})` };
+      }
+
+      // Validate each term ID
+      for (const termId of termsForTax) {
+        if (seenTermIds.has(termId)) {
+          return { error: `Duplicate term assignment for term ID "${termId}"` };
+        }
+        seenTermIds.add(termId);
+
+        const termRes = await client.query(
+          'SELECT id, taxonomy_id, site_id, is_active FROM taxonomy_terms WHERE id = $1',
+          [termId]
+        );
+        if (termRes.rows.length === 0) {
+          return { error: `Taxonomy term "${termId}" not found` };
+        }
+        const term = termRes.rows[0];
+        if (!term) {
+          return { error: `Taxonomy term "${termId}" not found` };
+        }
+
+        if (term.site_id !== siteId) {
+          return { error: `Cross-site taxonomy term "${termId}" cannot be assigned to this site entry` };
+        }
+        if (term.taxonomy_id !== b.taxonomy_id) {
+          return { error: `Term "${termId}" does not belong to taxonomy "${taxKey}"` };
+        }
+        if (!term.is_active) {
+          return { error: `Cannot assign inactive taxonomy term "${termId}" to new revision` };
+        }
+        if (!b.tax_is_active) {
+          return { error: `Cannot assign term from inactive taxonomy "${taxKey}"` };
+        }
+
+        collectedTermIds.push(term.id as string);
+      }
+    }
+
+    return { termIds: collectedTermIds };
   }
 
   async publishContentEntry(
@@ -991,6 +1142,18 @@ export class ContentService {
       return { error: 'Published revision snapshot not found', status: 404 };
     }
 
+    // Load taxonomy terms attached to this published revision
+    const termsRes = await this.database.pool.query(
+      `SELECT tt.id, tt.key, tt.name, tt.description, tt.sort_order, tt.is_active,
+              t.key as taxonomy_key, t.name as taxonomy_name
+       FROM content_revision_terms crt
+       JOIN taxonomy_terms tt ON tt.id = crt.taxonomy_term_id
+       JOIN taxonomies t ON t.id = tt.taxonomy_id
+       WHERE crt.revision_id = $1
+       ORDER BY crt.sort_order ASC`,
+      [publishedRev.id]
+    );
+
     return {
       entry: {
         id: entry.id,
@@ -1001,6 +1164,7 @@ export class ContentService {
         slug: entry.publishedSlug,
         versionNumber: publishedRev.versionNumber,
         data: publishedRev.data,
+        taxonomies: termsRes.rows,
         publishedAt: publishedRev.createdAt.toISOString(),
       },
     };

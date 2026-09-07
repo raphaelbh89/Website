@@ -29,6 +29,13 @@
       "when": 1788748069795,
       "tag": "0003_flaky_supernaut",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788749863856,
+      "tag": "0004_condemned_invisible_woman",
+      "breakpoints": true
     }
   ]
 }

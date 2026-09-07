@@ -2,7 +2,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { hasPermission, type Scope } from '@platform/auth';
 import type { AuthService, AuthenticatedUserSession } from './auth.service.js';
 
-export type ScopeResolver = (request: FastifyRequest) => Scope | string | undefined;
+export type ScopeResolver = (request: FastifyRequest) => Scope | string | undefined | Promise<Scope | string | undefined>;
 
 export function extractSessionToken(request: FastifyRequest, cookieName: string): string | null {
   // 1. Cookie precedence (Browser Admin)
@@ -78,7 +78,7 @@ export function requirePermission(
     }
 
     // 2. Resolve target scope
-    const targetScope = scopeResolver ? scopeResolver(request) : { kind: 'global' as const };
+    const targetScope = scopeResolver ? await scopeResolver(request) : { kind: 'global' as const };
 
     // 3. Evaluate permission grants
     const allowed = hasPermission(authSession.grants, permission, targetScope);

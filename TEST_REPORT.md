@@ -340,6 +340,74 @@ Browser responsive/visual verification and hosted CI have not run. PostgreSQL po
 - `M3.1 Overall`: **READY_FOR_TEST**
 - Milestone M3 overall status: **IN_PROGRESS**.
 
+---
+
+### TR-20260907-M3-2 — Taxonomy & Categories Engine
+
+- Date/Time: 2026-09-07T10:10:00+07:00
+- Environment: Windows, Node 24.18.0, pnpm 11.17.0, PostgreSQL 16.14 portable (`127.0.0.1:55432`).
+- Target Branch: `main`
+- Dedicated Clean Database: `m32_clean_verify_db`
+
+**Executed checks**:
+1. ADR & Architecture Consistency:
+   - `ADR-0009` accepted: Hybrid global/site taxonomies, always site-bound terms, bi-directional no-shadowing via PostgreSQL advisory transaction locks, transaction-safe subtree move with CTE cycle detection and rigid depth cap (`depth <= 5`), tree mutation advisory lock (`tree:taxId:siteId`), activation/deactivation rules, and revision-term snapshotting (`content_revision_terms`).
+2. Database Schema & Migration `0004_condemned_invisible_woman.sql`:
+   - `taxonomies`: (id, key, name, description, scope_kind, site_id, is_hierarchical, is_system, is_active, created_at, updated_at).
+   - `taxonomy_terms`: (id, taxonomy_id, site_id, parent_id, depth, key, name, description, sort_order, is_active, created_at, updated_at).
+   - `content_type_taxonomies`: (content_type_id, taxonomy_id, is_required, min_terms, max_terms, sort_order).
+   - `content_revision_terms`: (revision_id, taxonomy_term_id, sort_order).
+   - Unique constraints, check constraints (`depth >= 0 AND depth <= 5`, `parent_id <> id`), and foreign key cascade/restrict rules verified.
+   - Verified `pnpm db:generate` reports 0 schema drift ("No schema changes, nothing to migrate 😴").
+3. Namespace & Concurrency Serialization:
+   - Global taxonomy creation (`category`) succeeds.
+   - Creating Site taxonomy with same key (`category`) rejected with 409 Conflict.
+   - Creating Site-specific taxonomy (`campus-dept`) succeeds.
+   - Creating Global taxonomy with key matching existing site taxonomy rejected with 409 Conflict.
+   - Concurrency race test: `Promise.all` with concurrent GLOBAL and SITE taxonomy creation on same key: exactly one succeeds (201), exactly one receives 409 Conflict, zero deadlock.
+4. Terms Hierarchy, Cycle Prevention, maxDepth=5, and Subtree Move:
+   - Root term creation (D:0) succeeds; duplicate term key in same taxonomy and site rejected (409).
+   - Terms are site-bound: Site B can create term with same key as Site A without collision.
+   - Cross-site parent assignment rejected with 400 Bad Request.
+   - Linear hierarchy Root(D:0) -> Child1(D:1) -> Child2(D:2) -> Child3(D:3) -> Child4(D:4) -> Child5(D:5) verified.
+   - Attempting to create Child 6 (depth 6) rejected with 400 Bad Request (`maxDepth = 5`).
+   - Self-parent attempt rejected (`parent_id <> id`).
+   - Moving node into its own descendant subtree rejected with 400 Bad Request (CTE cycle detection).
+   - Subtree move: Moving subtree (c3..c5) under root `admissions` atomically recomputes depths for the node and all descendants.
+5. Activation / Deactivation Invariants:
+   - Deactivating parent term while active descendants exist rejected with 400 Bad Request.
+   - Deactivating leaf term succeeds; inactive term cannot be newly assigned to a content entry.
+6. ContentType ↔ Taxonomy Bindings:
+   - Global ContentType attaching Site Taxonomy rejected with 400 Bad Request.
+   - Attaching Global Taxonomy to Global ContentType succeeds with required=true, minTerms=1, maxTerms=2.
+7. Revision-Term Snapshots & Zero Draft Leakage:
+   - Content entry creation enforces required taxonomy and validates terms.
+   - Published Revision 1 with category `news` is live on public endpoint.
+   - Draft Revision 2 updates category to `admissions` and headline.
+   - Public endpoint continues to serve Revision 1 with `news` (Zero Draft Leakage verified).
+   - Public filter by term `news` returns 1 item; public filter by term `admissions` returns 0 items.
+   - Publishing Revision 2 makes `admissions` live publicly.
+8. Copy-Forward Behavior:
+   - Updating title in Revision 3 with `taxonomyAssignments` omitted automatically copies forward Revision 2's taxonomy terms without term loss.
+9. Term Metadata Versioning Boundary:
+   - Updating Term display name (`name: "Tuyển sinh 2026"`) immediately reflects in live public content detail without creating a new revision.
+10. Admin UI (`apps/admin/app/taxonomies/page.tsx`):
+    - Hierarchical taxonomy list, Global/Site indicators, tree term renderer, edit/move terms, activation toggle. Static build prerender PASS.
+11. Automated Verification Pipeline:
+    - `pnpm lint`: PASS (0 errors, 0 warnings).
+    - `pnpm typecheck`: PASS (9 Turbo tasks across all packages).
+    - `pnpm test`: PASS (17 unit tests).
+    - `pnpm build`: PASS (6 Turbo tasks including `/taxonomies`).
+    - `pnpm test:integration`: PASS (6 full integration suites against clean PostgreSQL 16 DB `m32_clean_verify_db`).
+    - `pnpm test:smoke`: PASS (Production Fastify readiness, unavailable DB 503, web and admin HTTP 200).
+
+**Component Status Breakdown**:
+- `M3.2 Taxonomy Engine DB/API`: **VERIFIED**
+- `M3.2 Admin UI Build`: **PASS**
+- `M3.2 Browser Runtime`: **NOT RUN / READY_FOR_TEST**
+- `M3.2 Overall`: **READY_FOR_TEST**
+- Milestone M3 overall status: **IN_PROGRESS**.
+
 
 
 

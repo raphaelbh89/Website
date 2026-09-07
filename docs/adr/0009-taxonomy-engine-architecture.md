@@ -18,7 +18,7 @@ Trong hệ sinh thái CMS đa website (Multi-site Platform), phân loại nội 
 Cần giải quyết 8 thách thức kiến trúc cốt lõi:
 1. **Taxonomy Definition vs. Terms Scoping**: Cần cho phép Global Taxonomy Definition (ví dụ `category`, `tag`) để các module chuẩn hóa có thể tái sử dụng contract trên toàn hệ thống, nhưng dữ liệu terms cụ thể (ví dụ "Tuyển sinh", "Khoa CNTT") của từng trường/tổ chức phải tuyệt đối cô lập theo từng site.
 2. **Namespace Collision & Bi-directional No-Shadowing**: Ngăn chặn sự mập mờ (ambiguity) khi query bằng DSL: Không cho phép Site Taxonomy trùng key với Global Taxonomy và ngược lại.
-3. **Hierarchy Depth & Transaction-Safe Subtree Move**: Ngăn ngừa đệ quy vô hạn (cycles) và hiện tượng cây phân cấp quá sâu gây treo hệ thống. Khi di chuyển một nút nhánh (branch move), toàn bộ độ sâu của cây con (descendants) phải được tính toán và cập nhật nguyên tử.
+3. **Hierarchy Depth & Transaction-Safe Subtree Move**: Ngăn ngừa đệ quy vô hạn (cycles) và hiện tượng cây phân cấp quá sâu gây treo hệ thống. Khi di chuyển một nút nhánh (branch move), toàn bộ độ sâu của cây con (descendants) phải được tính toán và cập nhật nguyên tử. Mọi thao tác làm biến đổi cây phân cấp (tạo child, reparent, di chuyển subtree, deactivate parent, activate child) phải serialize bằng **PostgreSQL transaction-level advisory lock** theo `taxonomy_id + site_id` để ngăn race condition giữa nhiều instances.
 4. **Draft Leakage in Revision Lifecycle**: Tránh lưu quan hệ taxonomy trực tiếp trên thực thể `content_entries` vì điều này sẽ làm thay đổi danh mục công khai ngay khi biên tập viên mới chỉ lưu một bản nháp (draft).
 5. **Evolution of ContentType ↔ Taxonomy Bindings**: Việc thay đổi cấu hình ràng buộc (`required`, `min_terms`, `max_terms`) không được làm mất tính toàn vẹn của các revision lịch sử bất biến đã lưu trước đó.
 6. **Machine Identity Immutability**: Định danh máy (`key`, `scope_kind`, `site_id`, `taxonomy_id`) phải bất biến, tách biệt khỏi các nhãn hiển thị có thể thay đổi (`name`, `description`).
@@ -120,17 +120,21 @@ Phân định ranh giới giữa định danh máy (machine identity) và nhãn 
 3. **Transaction-Safe Subtree Move Algorithm**:
    Khi di chuyển một Term `B` sang nút cha mới `newParent` (hoặc chuyển thành root):
    - **Bước 1**: Bắt đầu Database Transaction (`BEGIN`).
-   - **Bước 2**: Khóa term `B` và `newParent` (`SELECT ... FOR UPDATE`).
-   - **Bước 3**: Kiểm tra toàn vẹn cùng taxonomy và cùng site:
+   - **Bước 2**: Nhận PostgreSQL transaction-level advisory lock theo cặp `(taxonomy_id, site_id)` để serialize toàn bộ các biến đổi cây đồng thời:
+     ```sql
+     SELECT pg_advisory_xact_lock(hashtext('tree:' || :taxonomyId || ':' || :siteId));
+     ```
+   - **Bước 3**: Khóa term `B` và `newParent` (`SELECT ... FOR UPDATE`).
+   - **Bước 4**: Kiểm tra toàn vẹn cùng taxonomy và cùng site:
      - `B.site_id === newParent.site_id`
      - `B.taxonomy_id === newParent.taxonomy_id`
-   - **Bước 4**: Kiểm tra chống chu trình trực tiếp (Self-parent):
+   - **Bước 5**: Kiểm tra chống chu trình trực tiếp (Self-parent):
      - `B.id !== newParent.id` (Từ chối `CHECK (parent_id <> id)`).
-   - **Bước 5**: Kiểm tra chống chu trình gián tiếp (Indirect cycle) bằng Recursive CTE:
+   - **Bước 6**: Kiểm tra chống chu trình gián tiếp (Indirect cycle) bằng Recursive CTE:
      - Duyệt ngược từ `newParent` lên root: Nếu gặp `B.id` nằm trong danh sách tổ tiên của `newParent` $\rightarrow$ Từ chối với `400 Bad Request` ("Cannot move term inside its own descendant subtree").
-   - **Bước 6**: Tính chiều cao lớn nhất của cây con bên dưới `B` (`subtreeHeight`):
+   - **Bước 7**: Tính chiều cao lớn nhất của cây con bên dưới `B` (`subtreeHeight`):
      - Dùng CTE tính `max(descendant.depth) - B.depth`.
-   - **Bước 7**: Xác minh giới hạn độ sâu:
+   - **Bước 8**: Xác minh giới hạn độ sâu:
      ```text
      newParentDepth = newParent ? newParent.depth : -1;
      targetDepth = newParentDepth + 1;
@@ -138,7 +142,7 @@ Phân định ranh giới giữa định danh máy (machine identity) và nhãn 
        REJECT ("Move exceeds maximum hierarchy depth of 5");
      }
      ```
-   - **Bước 8**: Cập nhật nguyên tử:
+   - **Bước 9**: Cập nhật nguyên tử:
      - Cập nhật `B.parent_id = newParent ? newParent.id : NULL`.
      - Cập nhật lại `depth` cho `B` và toàn bộ các descendants bên dưới bằng hiệu số chênh lệch `depthDelta = targetDepth - B.depth`:
        ```sql
@@ -146,7 +150,7 @@ Phân định ranh giới giữa định danh máy (machine identity) và nhãn 
        SET depth = depth + :depthDelta, updated_at = NOW() 
        WHERE id IN (SELECT id FROM descendant_ids);
        ```
-   - **Bước 9**: `COMMIT` transaction. Nếu có bất kỳ lỗi nào $\rightarrow$ `ROLLBACK` toàn bộ.
+   - **Bước 10**: `COMMIT` transaction. Nếu có bất kỳ lỗi nào $\rightarrow$ `ROLLBACK` toàn bộ.
 
 ---
 
@@ -236,8 +240,10 @@ content_type_taxonomies
 3. **Parent Deactivation Policy**:
    - Áp dụng nguyên tắc dứt khoát: **Từ chối vô hiệu hóa Term cha nếu còn tồn tại Term con đang active** (`Reject deactivation of parent while active descendants exist`).
    - Quản trị viên phải vô hiệu hóa hoặc chuyển nhánh (reparent) toàn bộ các con trước khi vô hiệu hóa term cha.
-4. **Taxonomy Deactivation**:
-   - Sử dụng `taxonomies.is_active = false`. Không hard-delete taxonomy nếu đã có terms hoặc content binding đang tham chiếu.
+4. **Child Activation Policy**:
+   - Khi kích hoạt lại một term con (`activate`): **Bắt buộc toàn bộ các term tổ tiên (ancestors) phải đang ở trạng thái active**. Nếu có bất kỳ ancestor nào inactive, API từ chối với `HTTP 400 Bad Request` ("Cannot activate term whose ancestor is inactive"). Điều này ngăn chặn trạng thái bất hợp lý: `inactive parent -> active child`.
+5. **Taxonomy Deactivation**:
+   - Sử dụng `taxonomies.is_active = false`. Không hard-delete taxonomy nếu đã có terms hoặc content binding đang tham chiếu. Khi taxonomy inactive: không thể tạo term mới, không thể gán mới vào ContentType, và không thể gán term vào revision mới.
 
 ---
 

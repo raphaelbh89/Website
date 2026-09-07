@@ -342,10 +342,48 @@ No production/service installation; .local-postgres artifacts kept and ignored.
 - M3.1 Browser Runtime: `NOT RUN / READY_FOR_TEST`
 - M3.1 Overall: `READY_FOR_TEST`
 - Milestone M3: `IN_PROGRESS`
-**Next exact task:** M3.2 Taxonomy Architecture Checkpoint (Không sinh migration, dừng trước implementation).
+**Next exact task:** M3.2 Taxonomy Architecture Checkpoint (Không sinh migration, dừng trước implementation).---
 
+## 2026-09-07 10:10 — M3.2 Taxonomy Engine & Revision-Term Snapshots
 
+**Agent/Role:** Backend / Lead Architect / QA
+**Task:** Hoàn tất toàn bộ implementation và verification cho Milestone M3.2:
+1. Updated ADR-0009 với tree advisory lock serialization `hashtext('tree:' || taxId || ':' || siteId)` và activation invariant (mọi ancestor phải active).
+2. Defined 4 database tables trong `packages/database/src/schema.ts` (`taxonomies`, `taxonomy_terms`, `content_type_taxonomies`, `content_revision_terms`) và generated migration `0004_condemned_invisible_woman.sql` với custom constraints (`CHECK parent_id <> id`, `CHECK depth BETWEEN 0 AND 5`, `CHECK min_terms >= 0`, `NULLS NOT DISTINCT`).
+3. Seeded 4 taxonomy permissions: `taxonomies.read`, `taxonomies.manage`, `taxonomy_terms.read`, `taxonomy_terms.manage` cho `system_super_admin`.
+4. Implemented `TaxonomyService` trong `apps/api/src/taxonomy.service.ts` với đầy đủ advisory lock serialization, bi-directional no-shadowing, hierarchy creation & recursive CTE cycle detection, subtree move với atomic depth delta recomputation, activation/deactivation cascading invariants, ContentType-Taxonomy bindings (scope compatibility & non-retroactive policy), và public taxonomy term resolver/filter.
+5. Implemented `ContentService` revision-term snapshots: snapshotting `taxonomyAssignments` khi tạo revision, copy-forward khi omitted trong PATCH, zero-draft leakage protection, và historical term retention.
+6. Implemented Fastify endpoints trong `apps/api/src/app.ts` theo đúng standard conventions (không `/api` prefix).
+7. Implemented Admin UI `/taxonomies` trong `apps/admin/app/taxonomies/page.tsx` hỗ trợ list, scope badges, hierarchical tree viewer, add/edit/move modals, và activate/deactivate actions.
+8. Created 6th comprehensive integration test suite `Suite 6: M3.2 Taxonomy Engine & Revision-Term Snapshots` trong `packages/database/src/database.integration.test.ts` kiểm thử toàn bộ 22 tiêu chí trong matrix.
 
+**Files changed:**
+- `docs/adr/0009-taxonomy-engine-architecture.md`
+- `packages/database/src/schema.ts`
+- `packages/database/src/index.ts`
+- `packages/database/drizzle/0004_condemned_invisible_woman.sql`
+- `apps/api/src/taxonomy.service.ts`
+- `apps/api/src/content.service.ts`
+- `apps/api/src/auth.guard.ts`
+- `apps/api/src/app.ts`
+- `apps/admin/app/taxonomies/page.tsx`
+- `packages/database/src/database.integration.test.ts`
+- `PROJECT_STATE.md`, `PROGRESS.md`, `HANDOFF.md`, `TEST_REPORT.md`, `DEV_LOG.md`
 
+**Commands:**
+- `pnpm lint` -> PASS (0 errors, 0 warnings)
+- `pnpm typecheck` -> PASS (9 Turbo tasks)
+- `pnpm test` -> PASS (17 unit tests)
+- `pnpm build` -> PASS (6 Turbo tasks)
+- `pnpm test:integration` -> PASS (all 6 integration suites on clean `m32_clean_verify_db`)
+- `pnpm test:smoke` -> PASS (HTTP liveness/DB status tests)
+- `pnpm db:generate` -> PASS ("No schema changes, nothing to migrate 😴")
+
+**Resulting status:**
+- M3.2 Taxonomy Engine Backend/DB/API: `VERIFIED`
+- M3.2 Admin UI Build: `PASS`
+- M3.2 Browser Runtime: `NOT RUN / READY_FOR_TEST`
+- Milestone M3 overall status: `IN_PROGRESS` (M3.1 and M3.2 both `READY_FOR_TEST`)
+**Next exact task:** User verification / Stop before M4 Media Library.
 
 

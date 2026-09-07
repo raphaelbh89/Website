@@ -11,7 +11,7 @@
 | M0 | Architecture & Agent Governance | VERIFIED | Architect | Markdown package |
 | M1 | Monorepo Foundation | VERIFIED | Orchestrator / Backend / QA | TEST_REPORT.md TR-20260907-M1-RERUN; independent verification passed; baseline commit 9294b50 pushed |
 | M2 | Auth + RBAC | READY_FOR_TEST | Backend / Architect | M2.1 VERIFIED; M2.2 READY_FOR_TEST (API/DB Verified); M2.3 Scoped Guards VERIFIED (TR-20260907-M2-3); M2.4 Admin User/Role Management VERIFIED (TR-20260907-M2-4). Overall M2 pending browser runtime verification. |
-| M3 | CMS Core | IN_PROGRESS | Backend/Admin | M3.1 Content Engine DB/API: VERIFIED, M3.1 Admin UI Build: PASS, M3.1 Browser Runtime: NOT RUN / READY_FOR_TEST, M3.1 Overall: READY_FOR_TEST (TR-20260907-M3-1; Content Types, 5 core field types, bi-directional no-shadowing race test, revision ownership rejection, content type immutability, canonical BCP-47 locale, revision-pointer lifecycle, singletons, optimistic concurrency, non-destructive draft edits, and public resolver verified against clean PostgreSQL 16 DB). |
+| M3 | CMS Core | IN_PROGRESS | Backend/Admin | M3.1 Core Slice READY_FOR_TEST (DB/API VERIFIED); M3.2 Taxonomy Engine READY_FOR_TEST (DB/API VERIFIED; TR-20260907-M3-2; Hybrid global/site scoping, terms site-bound, no-shadowing race test, hierarchy subtree move, maxDepth=5, cycle prevention, activation invariants, ContentType bindings, Revision-Term snapshots, copy-forward, zero draft leakage, public term filter proof, clean migration 0004_condemned_invisible_woman.sql). |
 | M4 | Media + Menu + Forms + Settings | TODO | Backend/Admin | - |
 | M5 | Page Builder + Module Registry | TODO | Admin/Frontend | - |
 | M6 | Theme Engine + Responsive Config | TODO | Frontend/Design | - |
@@ -31,7 +31,7 @@
 | Permission management | VERIFIED | Backend/Admin | Security/QA | M2.1 engine & M2.3 Fastify Scoped Authorization Guards & M2.4 Role Assignment Invariants VERIFIED (TR-20260907-M2-4) |
 | Content Type builder | VERIFIED | Backend/Admin | QA | M3.1 schema-driven CMS Field Schema (text, textarea, number, boolean, select), bi-directional no-shadowing, UI schema viewer, create modal (TR-20260907-M3-1) |
 | Content Entry CRUD | VERIFIED | Backend/Admin | QA | M3.1 Revision-pointer model, immutable revisions, non-destructive draft editing, optimistic concurrency, dynamic form renderer, public content resolver (TR-20260907-M3-1) |
-| Category/Taxonomy | TODO | Backend/Admin | QA | reusable (M3.2) |
+| Category/Taxonomy | VERIFIED | Backend/Admin | QA | M3.2 Hybrid taxonomy definitions, site-bound terms, subtree move, maxDepth=5, cycle prevention, revision-term snapshots, copy-forward, public term filtering proof (DB/API VERIFIED; Browser READY_FOR_TEST; TR-20260907-M3-2) |
 | Media Library | TODO | Backend/Admin | Security/QA | upload validation |
 | Menu Builder | TODO | Backend/Admin | QA | nested/mega ready |
 | Form Builder | TODO | Backend/Admin | Security/QA | submissions/export |

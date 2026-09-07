@@ -11,6 +11,7 @@ import {
   permissions,
   rolePermissions,
   userRoleAssignments,
+  contentRevisionTerms,
 } from './index.js';
 import { hashPassword, generateSessionToken, hashSessionToken, getSessionCookieName } from '@platform/auth';
 import { buildApp } from '../../../apps/api/src/app.js';
@@ -1825,4 +1826,574 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     await app.close();
   }
 }, 30000);
+
+it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serialization, hierarchy, cycle prevention, maxDepth=5, subtree move, activate/deactivate invariants, ContentType bindings, Revision-Term snapshots, copy-forward, and zero-draft-leakage', async () => {
+  const app = buildApp({
+    checkDatabase: async () => {},
+    database,
+    nodeEnv: 'test',
+    cookieSecret: 'test-secret-must-be-at-least-32-chars-long!',
+    corsOrigin: 'http://localhost:3000',
+  });
+
+  try {
+    // 0. Setup test sites and admin session
+    const [siteA] = await database.db
+      .insert(sites)
+      .values({ key: 'm32_site_a', name: 'M3.2 Site A' })
+      .returning();
+    const [siteB] = await database.db
+      .insert(sites)
+      .values({ key: 'm32_site_b', name: 'M3.2 Site B' })
+      .returning();
+
+    const [adminUser] = await database.db
+      .insert(users)
+      .values({
+        email: 'm32_admin@example.com',
+        passwordHash: 'dummy',
+        name: 'M3.2 Admin',
+      })
+      .returning();
+
+    const superAdminRole = await database.db.query.roles.findFirst({
+      where: (r, { eq: eqOp }) => eqOp(r.key, 'system_super_admin'),
+    });
+
+    await database.db.insert(userRoleAssignments).values({
+      userId: adminUser!.id,
+      roleId: superAdminRole!.id,
+      scopeKind: 'global',
+    });
+
+    const rawToken = generateSessionToken();
+    const hashed = hashSessionToken(rawToken);
+    await database.db.insert(sessions).values({
+      userId: adminUser!.id,
+      tokenHash: hashed,
+      expiresAt: new Date(Date.now() + 86400000),
+    });
+
+    const adminCookies = { [getSessionCookieName(false)]: rawToken };
+
+    // 1. Namespace: Global and Site taxonomy creation & Bi-directional No-shadowing
+    const globalCatRes = await app.inject({
+      method: 'POST',
+      url: '/taxonomies',
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        key: 'category',
+        name: 'Categories',
+        scopeKind: 'global',
+        isHierarchical: true,
+      },
+    });
+    expect(globalCatRes.statusCode).toBe(201);
+    const globalCat = globalCatRes.json().taxonomy;
+    expect(globalCat.scope_kind).toBe('global');
+    expect(globalCat.site_id).toBeNull();
+    expect(globalCat.is_hierarchical).toBe(true);
+
+    // Conflict: Creating site taxonomy with same key as global taxonomy
+    const siteConflictRes = await app.inject({
+      method: 'POST',
+      url: '/taxonomies',
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        key: 'category',
+        name: 'Site Category',
+        scopeKind: 'site',
+        siteId: siteA!.id,
+      },
+    });
+    expect(siteConflictRes.statusCode).toBe(409);
+    expect(siteConflictRes.json().message).toContain('a global taxonomy with this key already exists');
+
+    // Create Site-specific taxonomy
+    const siteTaxRes = await app.inject({
+      method: 'POST',
+      url: '/taxonomies',
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        key: 'campus-dept',
+        name: 'Campus Departments',
+        scopeKind: 'site',
+        siteId: siteA!.id,
+        isHierarchical: true,
+      },
+    });
+    expect(siteTaxRes.statusCode).toBe(201);
+    const siteTax = siteTaxRes.json().taxonomy;
+    expect(siteTax.scope_kind).toBe('site');
+    expect(siteTax.site_id).toBe(siteA!.id);
+
+    // Reverse Conflict: Creating global taxonomy with key matching existing site taxonomy
+    const revConflictRes = await app.inject({
+      method: 'POST',
+      url: '/taxonomies',
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        key: 'campus-dept',
+        name: 'Global Departments',
+        scopeKind: 'global',
+      },
+    });
+    expect(revConflictRes.statusCode).toBe(409);
+    expect(revConflictRes.json().message).toContain('a site-specific taxonomy with this key already exists');
+
+    // Concurrent race test: Parallel creation of GLOBAL vs SITE taxonomy with same key
+    const raceKey = 'concurrent-race-tax';
+    const [raceGlobalRes, raceSiteRes] = await Promise.all([
+      app.inject({
+        method: 'POST',
+        url: '/taxonomies',
+        headers: { 'content-type': 'application/json' },
+        cookies: adminCookies,
+        payload: {
+          key: raceKey,
+          name: 'Concurrent Global',
+          scopeKind: 'global',
+        },
+      }),
+      app.inject({
+        method: 'POST',
+        url: '/taxonomies',
+        headers: { 'content-type': 'application/json' },
+        cookies: adminCookies,
+        payload: {
+          key: raceKey,
+          name: 'Concurrent Site',
+          scopeKind: 'site',
+          siteId: siteA!.id,
+        },
+      }),
+    ]);
+    const statuses = [raceGlobalRes.statusCode, raceSiteRes.statusCode].sort();
+    expect(statuses).toEqual([201, 409]);
+
+    // 2. Terms Hierarchy, Cycle Prevention, maxDepth=5, and Subtree Move
+    // Create root term in Site A under global category
+    const rootRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/taxonomies/category/terms`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        key: 'news',
+        name: 'Tin tức',
+      },
+    });
+    expect(rootRes.statusCode).toBe(201);
+    const rootTerm = rootRes.json().term;
+    expect(rootTerm.depth).toBe(0);
+    expect(rootTerm.parent_id).toBeNull();
+    expect(rootTerm.site_id).toBe(siteA!.id);
+
+    // Duplicate key under same taxonomy & site rejected
+    const dupTermRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/taxonomies/category/terms`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        key: 'news',
+        name: 'Tin tức trùng lặp',
+      },
+    });
+    expect(dupTermRes.statusCode).toBe(409);
+
+    // Terms are ALWAYS site-bound: Site B can use key 'news' without collision!
+    const siteBNewsRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteB!.id}/taxonomies/category/terms`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        key: 'news',
+        name: 'Site B News',
+      },
+    });
+    expect(siteBNewsRes.statusCode).toBe(201);
+    const siteBTerm = siteBNewsRes.json().term;
+    expect(siteBTerm.site_id).toBe(siteB!.id);
+
+    // Cross-site parent rejection: Site A cannot set Site B's term as parent
+    const crossSiteParentRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/taxonomies/category/terms`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        key: 'sub-news',
+        name: 'Sub News',
+        parentId: siteBTerm.id,
+      },
+    });
+    expect(crossSiteParentRes.statusCode).toBe(400);
+    expect(crossSiteParentRes.json().message).toContain('Cross-site parent term is rejected');
+
+    // Create valid child chain: Root(D:0) -> Child1(D:1) -> Child2(D:2) -> Child3(D:3) -> Child4(D:4) -> Child5(D:5)
+    const child1Res = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/taxonomies/category/terms`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: { key: 'c1', name: 'Child 1', parentId: rootTerm.id },
+    });
+    expect(child1Res.statusCode).toBe(201);
+    const c1 = child1Res.json().term;
+    expect(c1.depth).toBe(1);
+
+    const child2Res = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/taxonomies/category/terms`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: { key: 'c2', name: 'Child 2', parentId: c1.id },
+    });
+    const c2 = child2Res.json().term;
+    expect(c2.depth).toBe(2);
+
+    const child3Res = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/taxonomies/category/terms`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: { key: 'c3', name: 'Child 3', parentId: c2.id },
+    });
+    const c3 = child3Res.json().term;
+    expect(c3.depth).toBe(3);
+
+    const child4Res = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/taxonomies/category/terms`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: { key: 'c4', name: 'Child 4', parentId: c3.id },
+    });
+    const c4 = child4Res.json().term;
+    expect(c4.depth).toBe(4);
+
+    const child5Res = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/taxonomies/category/terms`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: { key: 'c5', name: 'Child 5', parentId: c4.id },
+    });
+    const c5 = child5Res.json().term;
+    expect(c5.depth).toBe(5);
+
+    // Max depth exceeded: Creating depth 6 child rejected
+    const child6Res = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/taxonomies/category/terms`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: { key: 'c6', name: 'Child 6', parentId: c5.id },
+    });
+    expect(child6Res.statusCode).toBe(400);
+    expect(child6Res.json().message).toContain('maxDepth = 5');
+
+    // Cycle Detection:
+    // Self-parent attempt on c1
+    const selfParentRes = await app.inject({
+      method: 'PATCH',
+      url: `/sites/${siteA!.id}/taxonomies/category/terms/${c1.id}`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: { parentId: c1.id },
+    });
+    expect(selfParentRes.statusCode).toBe(400);
+    expect(selfParentRes.json().message).toContain('own parent');
+
+    // Indirect cycle: moving c1 into its own descendant c3
+    const cycleRes = await app.inject({
+      method: 'PATCH',
+      url: `/sites/${siteA!.id}/taxonomies/category/terms/${c1.id}`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: { parentId: c3.id },
+    });
+    expect(cycleRes.statusCode).toBe(400);
+    expect(cycleRes.json().message).toContain('cycle detected');
+
+    // Subtree Move & Atomic Depth Recomputation:
+    // Create new root branch 'admissions' (D:0)
+    const admRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/taxonomies/category/terms`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: { key: 'admissions', name: 'Tuyển sinh' },
+    });
+    const adm = admRes.json().term;
+    expect(adm.depth).toBe(0);
+
+    // Move c3 subtree (c3[D:3] -> c4[D:4] -> c5[D:5]) directly under adm (D:0)
+    // Target depth for c3 becomes 1, c4 becomes 2, c5 becomes 3.
+    const moveRes = await app.inject({
+      method: 'PATCH',
+      url: `/sites/${siteA!.id}/taxonomies/category/terms/${c3.id}`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: { parentId: adm.id },
+    });
+    expect(moveRes.statusCode).toBe(200);
+
+    // Verify recomputed depths in DB
+    const [c3After, c4After, c5After] = await Promise.all([
+      database.db.query.taxonomyTerms.findFirst({ where: (t, { eq: eqOp }) => eqOp(t.id, c3.id) }),
+      database.db.query.taxonomyTerms.findFirst({ where: (t, { eq: eqOp }) => eqOp(t.id, c4.id) }),
+      database.db.query.taxonomyTerms.findFirst({ where: (t, { eq: eqOp }) => eqOp(t.id, c5.id) }),
+    ]);
+    expect(c3After?.depth).toBe(1);
+    expect(c4After?.depth).toBe(2);
+    expect(c5After?.depth).toBe(3);
+
+    // 3. Activation / Deactivation Invariants:
+    // Deactivate parent while active descendants exist -> REJECTED
+    const deactAdmRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/taxonomies/category/terms/${adm.id}/deactivate`,
+      cookies: adminCookies,
+    });
+    expect(deactAdmRes.statusCode).toBe(400);
+    expect(deactAdmRes.json().message).toContain('active descendant terms exist');
+
+    // Deactivate leaf c5 -> SUCCESS
+    const deactC5Res = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/taxonomies/category/terms/${c5.id}/deactivate`,
+      cookies: adminCookies,
+    });
+    expect(deactC5Res.statusCode).toBe(200);
+
+    // 4. ContentType ↔ Taxonomy Bindings:
+    // Create GLOBAL ContentType 'article'
+    const ctRes = await app.inject({
+      method: 'POST',
+      url: '/content-types',
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        key: 'article_m32',
+        name: 'Articles M3.2',
+        kind: 'collection',
+        scopeKind: 'global',
+        dataSchema: {
+          version: 1,
+          fields: [{ key: 'headline', label: 'Headline', type: 'text', required: true }],
+        },
+      },
+    });
+    const contentType = ctRes.json().contentType;
+
+    // GLOBAL ContentType cannot attach SITE Taxonomy
+    const invalidBindRes = await app.inject({
+      method: 'PUT',
+      url: `/content-types/${contentType.id}/taxonomies`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        taxonomies: [{ taxonomyId: siteTax.id, isRequired: true }],
+      },
+    });
+    expect(invalidBindRes.statusCode).toBe(400);
+    expect(invalidBindRes.json().message).toContain('Global ContentType cannot attach site-specific taxonomy');
+
+    // Attach GLOBAL taxonomy 'category' with required=true, minTerms=1, maxTerms=2
+    const validBindRes = await app.inject({
+      method: 'PUT',
+      url: `/content-types/${contentType.id}/taxonomies`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        taxonomies: [
+          { taxonomyId: globalCat.id, isRequired: true, minTerms: 1, maxTerms: 2 },
+        ],
+      },
+    });
+    expect(validBindRes.statusCode).toBe(200);
+
+    // 5. Revision Taxonomy Snapshots & Binding Limits
+    // Entry creation without required category -> REJECTED
+    const noCatRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/content/article_m32`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Article Without Category',
+        data: { headline: 'Headline' },
+      },
+    });
+    expect(noCatRes.statusCode).toBe(400);
+    expect(noCatRes.json().message).toContain('Taxonomy "category" is required');
+
+    // Inactive term cannot be newly assigned: attempting to assign deactivated c5
+    const inactiveAssignRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/content/article_m32`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Article With Inactive Term',
+        data: { headline: 'Headline' },
+        taxonomyAssignments: { category: [c5.id] },
+      },
+    });
+    expect(inactiveAssignRes.statusCode).toBe(400);
+    expect(inactiveAssignRes.json().message).toContain('Cannot assign inactive taxonomy term');
+
+    // Max terms limit: assigning 3 terms when maxTerms=2 -> REJECTED
+    const maxLimitRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/content/article_m32`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Article Exceeding Max Terms',
+        data: { headline: 'Headline' },
+        taxonomyAssignments: { category: [rootTerm.id, c1.id, c2.id] },
+      },
+    });
+    expect(maxLimitRes.statusCode).toBe(400);
+    expect(maxLimitRes.json().message).toContain('allows at most 2 term(s)');
+
+    // Valid create: Revision 1 assigned with category 'news' (rootTerm)
+    const createEntryRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/content/article_m32`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        title: 'News Headline A',
+        slug: 'news-a',
+        data: { headline: 'News Headline A' },
+        taxonomyAssignments: { category: [rootTerm.id] },
+      },
+    });
+    expect(createEntryRes.statusCode).toBe(201);
+    const entry = createEntryRes.json().entry;
+    const rev1 = createEntryRes.json().revision;
+    expect(rev1.version_number).toBe(1);
+
+    // Publish Revision 1 to make it live
+    const pubRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/content/article_m32/${entry.id}/publish`,
+      cookies: adminCookies,
+    });
+    expect(pubRes.statusCode).toBe(200);
+
+    // 6. Zero Draft Leakage Test:
+    // Create draft Revision 2 changing category to 'admissions' (adm.id) and headline to 'Draft Headline'
+    const draftRev2Res = await app.inject({
+      method: 'PATCH',
+      url: `/sites/${siteA!.id}/content/article_m32/${entry.id}`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        expectedRevision: 1,
+        title: 'Admission Draft Title',
+        slug: 'admission-draft',
+        data: { headline: 'Draft Admission Headline' },
+        taxonomyAssignments: { category: [adm.id] },
+      },
+    });
+    expect(draftRev2Res.statusCode).toBe(200);
+
+    // Verify Public Content Resolver reads ONLY published revision (Revision 1 with 'news')
+    const publicBeforePublish = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA!.id}/content/article_m32/news-a`,
+    });
+    expect(publicBeforePublish.statusCode).toBe(200);
+    const pubEntry = publicBeforePublish.json().entry;
+    expect(pubEntry.title).toBe('News Headline A');
+    expect(pubEntry.taxonomies).toHaveLength(1);
+    expect(pubEntry.taxonomies[0].key).toBe('news'); // Zero Draft Leakage: still 'news'!
+
+    // Public filter by term 'news' returns entry
+    const publicFilterNews = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA!.id}/content/article_m32/taxonomies/category/news`,
+    });
+    expect(publicFilterNews.statusCode).toBe(200);
+    expect(publicFilterNews.json().total).toBe(1);
+
+    // Public filter by term 'admissions' does NOT return draft!
+    const publicFilterAdm = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA!.id}/content/article_m32/taxonomies/category/admissions`,
+    });
+    expect(publicFilterAdm.statusCode).toBe(200);
+    expect(publicFilterAdm.json().total).toBe(0);
+
+    // Publish Revision 2 -> Now public sees 'admissions'
+    const pubRev2Res = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/content/article_m32/${entry.id}/publish`,
+      cookies: adminCookies,
+    });
+    expect(pubRev2Res.statusCode).toBe(200);
+
+    const publicAfterPublish = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA!.id}/content/article_m32/admission-draft`,
+    });
+    expect(publicAfterPublish.statusCode).toBe(200);
+    const pubEntry2 = publicAfterPublish.json().entry;
+    expect(pubEntry2.taxonomies[0].key).toBe('admissions');
+
+    // 7. Copy-Forward Test:
+    // Update only title in Revision 3 without supplying taxonomyAssignments
+    const copyForwardRes = await app.inject({
+      method: 'PATCH',
+      url: `/sites/${siteA!.id}/content/article_m32/${entry.id}`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: {
+        expectedRevision: 2,
+        title: 'Copied Forward Title',
+      },
+    });
+    expect(copyForwardRes.statusCode).toBe(200);
+    const rev3 = copyForwardRes.json().revision;
+
+    // Verify Revision 3 automatically retained 'admissions' term from Revision 2
+    const rev3Terms = await database.db
+      .select()
+      .from(contentRevisionTerms)
+      .where(eq(contentRevisionTerms.revisionId, rev3.id));
+    expect(rev3Terms).toHaveLength(1);
+    expect(rev3Terms[0]?.taxonomyTermId).toBe(adm.id);
+
+    // 8. Term Metadata Versioning Boundary:
+    // Changing Term display name from 'Tuyển sinh' to 'Tuyển sinh 2026'
+    // immediately updates public presentation without creating new revision
+    const updateTermRes = await app.inject({
+      method: 'PATCH',
+      url: `/sites/${siteA!.id}/taxonomies/category/terms/${adm.id}`,
+      headers: { 'content-type': 'application/json' },
+      cookies: adminCookies,
+      payload: { name: 'Tuyển sinh 2026' },
+    });
+    expect(updateTermRes.statusCode).toBe(200);
+
+    const publicLiveTermCheck = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA!.id}/content/article_m32/admission-draft`,
+    });
+    expect(publicLiveTermCheck.statusCode).toBe(200);
+    expect(publicLiveTermCheck.json().entry.taxonomies[0].name).toBe('Tuyển sinh 2026');
+  } finally {
+    await app.close();
+  }
+}, 45000);
 

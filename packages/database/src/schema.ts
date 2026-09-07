@@ -136,3 +136,64 @@ export const contentEntryRevisions = pgTable('content_entry_revisions', {
   index('content_entry_revisions_entry_created_idx').on(table.entryId, table.createdAt),
 ]);
 
+// ---------------------------------------------------------------------------
+// M3.2: Taxonomy & Categories Engine Tables
+// ---------------------------------------------------------------------------
+
+export const taxonomies = pgTable('taxonomies', {
+  id: uuid('id').primaryKey().$defaultFn(v7),
+  key: text('key').notNull(),
+  name: text('name').notNull(),
+  description: text('description'),
+  scopeKind: text('scope_kind').notNull(), // 'global' | 'site'
+  siteId: uuid('site_id').references(() => sites.id, { onDelete: 'cascade' }),
+  isHierarchical: boolean('is_hierarchical').notNull().default(false),
+  isSystem: boolean('is_system').notNull().default(false),
+  isActive: boolean('is_active').notNull().default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index('taxonomies_site_id_idx').on(table.siteId),
+  uniqueIndex('taxonomies_scope_site_key_idx').on(table.scopeKind, table.siteId, table.key),
+]);
+
+export const taxonomyTerms = pgTable('taxonomy_terms', {
+  id: uuid('id').primaryKey().$defaultFn(v7),
+  taxonomyId: uuid('taxonomy_id').notNull().references(() => taxonomies.id, { onDelete: 'restrict' }),
+  siteId: uuid('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  parentId: uuid('parent_id'),
+  depth: integer('depth').notNull().default(0),
+  key: text('key').notNull(),
+  name: text('name').notNull(),
+  description: text('description'),
+  sortOrder: integer('sort_order').notNull().default(0),
+  isActive: boolean('is_active').notNull().default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('taxonomy_terms_site_tax_key_unique_idx').on(table.siteId, table.taxonomyId, table.key),
+  index('taxonomy_terms_parent_id_idx').on(table.parentId),
+  index('taxonomy_terms_tax_site_active_idx').on(table.taxonomyId, table.siteId, table.isActive),
+]);
+
+export const contentTypeTaxonomies = pgTable('content_type_taxonomies', {
+  contentTypeId: uuid('content_type_id').notNull().references(() => contentTypes.id, { onDelete: 'cascade' }),
+  taxonomyId: uuid('taxonomy_id').notNull().references(() => taxonomies.id, { onDelete: 'cascade' }),
+  isRequired: boolean('is_required').notNull().default(false),
+  minTerms: integer('min_terms').notNull().default(0),
+  maxTerms: integer('max_terms'),
+  sortOrder: integer('sort_order').notNull().default(0),
+}, (table) => [
+  primaryKey({ columns: [table.contentTypeId, table.taxonomyId] }),
+]);
+
+export const contentRevisionTerms = pgTable('content_revision_terms', {
+  revisionId: uuid('revision_id').notNull().references(() => contentEntryRevisions.id, { onDelete: 'cascade' }),
+  taxonomyTermId: uuid('taxonomy_term_id').notNull().references(() => taxonomyTerms.id, { onDelete: 'restrict' }),
+  sortOrder: integer('sort_order').notNull().default(0),
+}, (table) => [
+  primaryKey({ columns: [table.revisionId, table.taxonomyTermId] }),
+  index('content_revision_terms_revision_idx').on(table.revisionId),
+  index('content_revision_terms_term_idx').on(table.taxonomyTermId),
+]);
+

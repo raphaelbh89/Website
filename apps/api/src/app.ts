@@ -7,6 +7,7 @@ import type { createDatabase } from '@platform/database';
 import { AuthService, type AuthenticatedUserSession } from './auth.service.js';
 import { AdminService } from './admin.service.js';
 import { ContentService } from './content.service.js';
+import { TaxonomyService } from './taxonomy.service.js';
 import { extractSessionToken, requireAuthentication, requirePermission } from './auth.guard.js';
 
 export interface AppOptions {
@@ -51,6 +52,7 @@ export function buildApp(
   const authService = options.database ? new AuthService(options.database) : null;
   const adminService = options.database ? new AdminService(options.database) : null;
   const contentService = options.database ? new ContentService(options.database) : null;
+  const taxonomyService = options.database ? new TaxonomyService(options.database) : null;
 
   // 1. Register Fastify Cookie Plugin
   void app.register(cookie, {
@@ -917,5 +919,350 @@ export function buildApp(
     return res;
   });
 
+  // ---------------------------------------------------------------------------
+  // 14. M3.2 Taxonomy Definition Routes
+  // ---------------------------------------------------------------------------
+
+  app.get(
+    '/taxonomies',
+    {
+      preHandler: [requireAuthentication(authService, cookieName)],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!taxonomyService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const query = request.query as { scopeKind?: string; siteId?: string; activeOnly?: string };
+      const res = await taxonomyService.listTaxonomies({
+        scopeKind: query.scopeKind,
+        siteId: query.siteId,
+        activeOnly: query.activeOnly === 'true',
+      });
+      return res;
+    }
+  );
+
+  app.post(
+    '/taxonomies',
+    {
+      preHandler: [
+        requirePermission(authService, cookieName, 'taxonomies.manage', (req) => {
+          const body = req.body as { scopeKind?: string; siteId?: string };
+          if (body?.scopeKind === 'site' && body.siteId) {
+            return { kind: 'site', siteId: body.siteId };
+          }
+          return { kind: 'global' };
+        }),
+      ],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!taxonomyService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const body = request.body as {
+        key: string;
+        name: string;
+        description?: string;
+        scopeKind: 'global' | 'site';
+        siteId?: string;
+        isHierarchical?: boolean;
+      };
+      const res = await taxonomyService.createTaxonomy(body);
+      if (res.error) {
+        const statusCode = res.status ?? 400;
+        const errType = statusCode === 409 ? 'CONFLICT' : 'BAD_REQUEST';
+        return reply.code(statusCode).send({ error: errType, message: res.error });
+      }
+      return reply.code(201).send(res);
+    }
+  );
+
+  app.get(
+    '/taxonomies/:id',
+    {
+      preHandler: [requireAuthentication(authService, cookieName)],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!taxonomyService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const { id } = request.params as { id: string };
+      const res = await taxonomyService.getTaxonomy(id);
+      if (res.error) {
+        return reply.code(res.status ?? 404).send({ error: 'NOT_FOUND', message: res.error });
+      }
+      return res;
+    }
+  );
+
+  app.patch(
+    '/taxonomies/:id',
+    {
+      preHandler: [
+        requirePermission(authService, cookieName, 'taxonomies.manage', async (req) => {
+          const { id } = req.params as { id: string };
+          if (taxonomyService) {
+            const tax = await taxonomyService.getTaxonomy(id);
+            if (tax.taxonomy?.scope_kind === 'site' && tax.taxonomy.site_id) {
+              return { kind: 'site', siteId: tax.taxonomy.site_id as string };
+            }
+          }
+          return { kind: 'global' };
+        }),
+      ],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!taxonomyService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const { id } = request.params as { id: string };
+      const body = request.body as { name?: string; description?: string; isHierarchical?: boolean; isActive?: boolean };
+      const res = await taxonomyService.updateTaxonomy(id, body);
+      if (res.error) {
+        return reply.code(res.status ?? 400).send({ error: 'BAD_REQUEST', message: res.error });
+      }
+      return res;
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // 15. M3.2 Taxonomy Terms Routes (Site-bound)
+  // ---------------------------------------------------------------------------
+
+  app.get(
+    '/sites/:siteId/taxonomies/:taxKey/terms',
+    {
+      preHandler: [
+        requirePermission(authService, cookieName, 'taxonomy_terms.read', (req) => ({
+          kind: 'site',
+          siteId: (req.params as { siteId: string }).siteId,
+        })),
+      ],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!taxonomyService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const { siteId, taxKey } = request.params as { siteId: string; taxKey: string };
+      const query = request.query as { tree?: string; activeOnly?: string };
+      const res = await taxonomyService.listTerms(siteId, taxKey, {
+        asTree: query.tree === 'true',
+        activeOnly: query.activeOnly === 'true',
+      });
+      if (res.error) {
+        return reply.code(res.status ?? 404).send({ error: 'NOT_FOUND', message: res.error });
+      }
+      return res;
+    }
+  );
+
+  app.post(
+    '/sites/:siteId/taxonomies/:taxKey/terms',
+    {
+      preHandler: [
+        requirePermission(authService, cookieName, 'taxonomy_terms.manage', (req) => ({
+          kind: 'site',
+          siteId: (req.params as { siteId: string }).siteId,
+        })),
+      ],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!taxonomyService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const { siteId, taxKey } = request.params as { siteId: string; taxKey: string };
+      const body = request.body as { key: string; name: string; description?: string; parentId?: string; sortOrder?: number };
+      const res = await taxonomyService.createTerm(siteId, taxKey, body);
+      if (res.error) {
+        const statusCode = res.status ?? 400;
+        const errType = statusCode === 409 ? 'CONFLICT' : statusCode === 404 ? 'NOT_FOUND' : 'BAD_REQUEST';
+        return reply.code(statusCode).send({ error: errType, message: res.error });
+      }
+      return reply.code(201).send(res);
+    }
+  );
+
+  app.patch(
+    '/sites/:siteId/taxonomies/:taxKey/terms/:termId',
+    {
+      preHandler: [
+        requirePermission(authService, cookieName, 'taxonomy_terms.manage', (req) => ({
+          kind: 'site',
+          siteId: (req.params as { siteId: string }).siteId,
+        })),
+      ],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!taxonomyService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const { siteId, taxKey, termId } = request.params as { siteId: string; taxKey: string; termId: string };
+      const body = request.body as { name?: string; description?: string; parentId?: string | null; sortOrder?: number };
+      const res = await taxonomyService.updateTerm(siteId, taxKey, termId, body);
+      if (res.error) {
+        const statusCode = res.status ?? 400;
+        const errType = statusCode === 404 ? 'NOT_FOUND' : 'BAD_REQUEST';
+        return reply.code(statusCode).send({ error: errType, message: res.error });
+      }
+      return res;
+    }
+  );
+
+  app.post(
+    '/sites/:siteId/taxonomies/:taxKey/terms/:termId/deactivate',
+    {
+      preHandler: [
+        requirePermission(authService, cookieName, 'taxonomy_terms.manage', (req) => ({
+          kind: 'site',
+          siteId: (req.params as { siteId: string }).siteId,
+        })),
+      ],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!taxonomyService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const { siteId, taxKey, termId } = request.params as { siteId: string; taxKey: string; termId: string };
+      const res = await taxonomyService.deactivateTerm(siteId, taxKey, termId);
+      if (res.error) {
+        const statusCode = res.status ?? 400;
+        const errType = statusCode === 404 ? 'NOT_FOUND' : 'BAD_REQUEST';
+        return reply.code(statusCode).send({ error: errType, message: res.error });
+      }
+      return res;
+    }
+  );
+
+  app.post(
+    '/sites/:siteId/taxonomies/:taxKey/terms/:termId/activate',
+    {
+      preHandler: [
+        requirePermission(authService, cookieName, 'taxonomy_terms.manage', (req) => ({
+          kind: 'site',
+          siteId: (req.params as { siteId: string }).siteId,
+        })),
+      ],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!taxonomyService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const { siteId, taxKey, termId } = request.params as { siteId: string; taxKey: string; termId: string };
+      const res = await taxonomyService.activateTerm(siteId, taxKey, termId);
+      if (res.error) {
+        const statusCode = res.status ?? 400;
+        const errType = statusCode === 404 ? 'NOT_FOUND' : 'BAD_REQUEST';
+        return reply.code(statusCode).send({ error: errType, message: res.error });
+      }
+      return res;
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // 16. M3.2 ContentType ↔ Taxonomy Bindings Routes
+  // ---------------------------------------------------------------------------
+
+  app.get(
+    '/content-types/:contentTypeId/taxonomies',
+    {
+      preHandler: [requireAuthentication(authService, cookieName)],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!taxonomyService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const { contentTypeId } = request.params as { contentTypeId: string };
+      const res = await taxonomyService.getContentTypeTaxonomies(contentTypeId);
+      if (res.error) {
+        return reply.code(res.status ?? 404).send({ error: 'NOT_FOUND', message: res.error });
+      }
+      return res;
+    }
+  );
+
+  app.put(
+    '/content-types/:contentTypeId/taxonomies',
+    {
+      preHandler: [
+        requirePermission(authService, cookieName, 'content_types.manage', async (req) => {
+          const { contentTypeId } = req.params as { contentTypeId: string };
+          if (contentService) {
+            const ct = await contentService.getContentType(contentTypeId);
+            if (ct.contentType?.scope_kind === 'site' && ct.contentType.site_id) {
+              return { kind: 'site', siteId: ct.contentType.site_id as string };
+            }
+          }
+          return { kind: 'global' };
+        }),
+      ],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!taxonomyService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const { contentTypeId } = request.params as { contentTypeId: string };
+      const body = request.body as {
+        taxonomies: {
+          taxonomyId: string;
+          isRequired?: boolean;
+          minTerms?: number;
+          maxTerms?: number | null;
+          sortOrder?: number;
+        }[];
+      };
+      const res = await taxonomyService.setContentTypeTaxonomies(contentTypeId, body?.taxonomies || []);
+      if (res.error) {
+        const statusCode = res.status ?? 400;
+        const errType = statusCode === 404 ? 'NOT_FOUND' : 'BAD_REQUEST';
+        return reply.code(statusCode).send({ error: errType, message: res.error });
+      }
+      return res;
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // 17. M3.2 Public Filtering Proof Route (by Taxonomy & Term)
+  // ---------------------------------------------------------------------------
+
+  app.get(
+    '/public/sites/:siteId/content/:typeKey/taxonomies/:taxKey/:termSlug',
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      reply.header('Cache-Control', 'public, max-age=60');
+      if (!taxonomyService) {
+        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
+      }
+      const { siteId, typeKey, taxKey, termSlug } = request.params as {
+        siteId: string;
+        typeKey: string;
+        taxKey: string;
+        termSlug: string;
+      };
+      const query = request.query as { locale?: string };
+      const res = await taxonomyService.queryPublicContentByTerm(
+        siteId,
+        typeKey,
+        taxKey,
+        termSlug,
+        query?.locale || 'vi'
+      );
+      if (res.error) {
+        return reply.code(res.status ?? 404).send({ error: 'NOT_FOUND', message: res.error });
+      }
+      return res;
+    }
+  );
+
   return app;
 }
+

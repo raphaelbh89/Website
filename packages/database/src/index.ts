@@ -15,6 +15,10 @@ export {
   contentTypes,
   contentEntries,
   contentEntryRevisions,
+  taxonomies,
+  taxonomyTerms,
+  contentTypeTaxonomies,
+  contentRevisionTerms,
 } from './schema.js';
 
 export function createDatabase(connectionString: string) {
@@ -58,6 +62,10 @@ export const SYSTEM_PERMISSIONS = [
   { key: 'content.update', name: 'Update Content', module: 'content', description: 'Update existing content entries' },
   { key: 'content.publish', name: 'Publish Content', module: 'content', description: 'Publish content to public websites' },
   { key: 'content.delete', name: 'Delete Content', module: 'content', description: 'Delete content entries' },
+  { key: 'taxonomies.read', name: 'View Taxonomies', module: 'taxonomies', description: 'View taxonomy definitions' },
+  { key: 'taxonomies.manage', name: 'Manage Taxonomies', module: 'taxonomies', description: 'Create and configure taxonomy definitions' },
+  { key: 'taxonomy_terms.read', name: 'Read Taxonomy Terms', module: 'taxonomies', description: 'Read taxonomy terms for a site' },
+  { key: 'taxonomy_terms.manage', name: 'Manage Taxonomy Terms', module: 'taxonomies', description: 'Create, update, and manage taxonomy terms' },
 ] as const;
 
 /**

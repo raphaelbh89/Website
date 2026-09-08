@@ -4,8 +4,8 @@
 
 ## Project Status
 
-- Stage: `M3_IN_PROGRESS` (M1 foundation `VERIFIED` [commit `9294b50`]; M2 Identity & RBAC `READY_FOR_TEST` [backend `VERIFIED`, commit `61b91bd`]; M3.1 Content Engine DB/API: `VERIFIED`, Admin UI Build: `PASS`, Browser Runtime: `NOT RUN / READY_FOR_TEST`, M3.1 Overall: `READY_FOR_TEST`; M3.2 Taxonomy Engine DB/API: `VERIFIED`, Admin UI Build: `PASS`, Browser Runtime: `NOT RUN / READY_FOR_TEST`, M3.2 Overall: `READY_FOR_TEST`).
-- Source implementation: M3.2 Taxonomy & Categories Engine fully implemented and verified against clean PostgreSQL 16 DB and Admin UI builds. Implemented: hybrid global/site taxonomies with strictly site-bound terms, bi-directional no-shadowing with PostgreSQL advisory transaction locks, machine identity immutability, hierarchical subtree move algorithm with cycle detection and rigid depth cap (`depth <= 5`), parent/child activation-deactivation invariants, ContentType taxonomy bindings, revision-term immutable snapshots (`content_revision_terms`), copy-forward snapshotting on draft updates, zero draft leakage, and public taxonomy filtering proof. Browser runtime flow remains `NOT RUN / READY_FOR_TEST`.
+- Stage: `M3_DONE_AWAITING_M4_ARCHITECTURE_CHECKPOINT` (M1 foundation `VERIFIED` [commit `9294b50`]; M3 audit remediation independently verified and full browser runtime completed).
+- Source implementation: M3 CMS Core is `DONE`. The closure includes site-aware public taxonomy routing, deterministic multi-site/locale isolation, taxonomy archive semantics, atomic revision-term behavior, strict CMS schemas/defaults, mandatory optimistic concurrency, UUIDv7 business IDs, relational revision-pointer ownership, cookie-safe auth/CSRF transport, one configurable Admin API client, and the complete Admin content/taxonomy workflow. Browser runtime verified login/session, dashboard, users, roles, content types, taxonomy bindings, taxonomies, content create/edit/publish and logout.
 - Target architecture: `Modular Monolith / Monorepo`
 - Multi-Agent workflow: `DEFINED`
 
@@ -18,7 +18,7 @@
 - TypeScript-first
 - Node.js 24 / pnpm 11.17.0 / Turborepo 2.10.12 / TypeScript 5.9.3 (ADR-0004).
 - Next.js 16.3.4 / React 19.2.8 for web/admin; Fastify 5.12.3 API.
-- Drizzle ORM 0.45.2 + Kit 0.31.10 / pg 8.23.0; generated SQL migrations for sites, identity schema, content engine schema (0003_flaky_supernaut.sql), and taxonomy engine schema (0004_condemned_invisible_woman.sql).
+- Drizzle ORM 0.45.2 + Kit 0.31.10 / pg 8.23.0; generated SQL migrations through `0005_worried_starjammers.sql`, including relational ownership constraints for entry revision pointers.
 - Vitest 4.0.18, ESLint 10.10.0; GitHub Actions verification workflow prepared.
 
 ### Apps
@@ -109,7 +109,5 @@ Các mục sau phải tạo ADR trước khi implement nếu chưa được ch�
 
 ## Next Recommended Milestone
  
-Proceed to **`M3.2 Taxonomy & Advanced Content Engine`** or **`M4 Media Library & Storage Abstraction`** upon architecture checkpoint and approval.
-
-
+Stop before M4 implementation. Review `ADR-0010` as a **Proposed** M4.1 architecture checkpoint; implementation, packages, and migrations require explicit acceptance first.
 

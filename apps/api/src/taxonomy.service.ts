@@ -1,4 +1,5 @@
-import type { createDatabase } from '@platform/database';
+import { createDatabase, v7 } from '@platform/database';
+import { isValidLocale, normalizeLocale } from './locale.js';
 
 export interface CreateTaxonomyInput {
   key: string;
@@ -138,12 +139,14 @@ export class TaxonomyService {
         };
       }
 
+      const taxonomyId = v7();
       const insertRes = await client.query(
         `INSERT INTO taxonomies (
           id, key, name, description, scope_kind, site_id, is_hierarchical, is_system, is_active, created_at, updated_at
-        ) VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, false, true, NOW(), NOW())
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, false, true, NOW(), NOW())
         RETURNING *`,
         [
+          taxonomyId,
           rawKey,
           input.name.trim(),
           input.description?.trim() || null,
@@ -356,12 +359,14 @@ export class TaxonomyService {
         parentId = parent.id;
       }
 
+      const termId = v7();
       const insertRes = await client.query(
         `INSERT INTO taxonomy_terms (
           id, taxonomy_id, site_id, parent_id, depth, key, name, description, sort_order, is_active, created_at, updated_at
-        ) VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, true, NOW(), NOW())
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, NOW(), NOW())
         RETURNING *`,
         [
+          termId,
           taxonomy.id,
           siteId,
           parentId,
@@ -864,11 +869,26 @@ export class TaxonomyService {
     typeKey: string,
     taxKey: string,
     termSlug: string,
-    locale: string = 'vi'
+    locale: string
   ): Promise<{ items: Record<string, unknown>[]; total: number; error?: string; status?: number }> {
+    if (!locale || typeof locale !== 'string' || !locale.trim()) {
+      return { error: 'Query parameter "locale" is required', status: 400, items: [], total: 0 };
+    }
+    if (!isValidLocale(locale)) {
+      return { error: `Invalid locale "${locale}". Must be a valid BCP-47 tag`, status: 400, items: [], total: 0 };
+    }
+    const normalizedLocale = normalizeLocale(locale);
+    const siteRes = await this.database.pool.query('SELECT id FROM sites WHERE id = $1', [siteId]);
+    if (siteRes.rows.length === 0) {
+      return { error: `Site "${siteId}" not found`, status: 404, items: [], total: 0 };
+    }
+
     const taxRes = await this.resolveTaxonomyByKey(taxKey, siteId);
     if (!taxRes.taxonomy) return { error: taxRes.error, status: taxRes.status, items: [], total: 0 };
     const taxonomy = taxRes.taxonomy;
+    if (!taxonomy.is_active) {
+      return { items: [], total: 0 };
+    }
 
     const typeRes = await this.resolveContentTypeByKey(typeKey, siteId);
     if (!typeRes.contentType) return { error: typeRes.error, status: typeRes.status, items: [], total: 0 };
@@ -882,6 +902,9 @@ export class TaxonomyService {
       return { items: [], total: 0 };
     }
     const term = termRes.rows[0];
+    if (!term.is_active) {
+      return { items: [], total: 0 };
+    }
 
     const queryRes = await this.database.pool.query(
       `SELECT e.id, e.site_id, e.published_slug, r.title, r.version_number, r.data, r.created_at as published_at,
@@ -897,7 +920,7 @@ export class TaxonomyService {
          AND e.published_revision_id IS NOT NULL
          AND tt.id = $4
        ORDER BY r.created_at DESC`,
-      [siteId, contentType.id, locale, term.id]
+      [siteId, contentType.id, normalizedLocale, term.id]
     );
 
     return {

@@ -1,5 +1,4 @@
 # TEST_REPORT.md
-
 ## Test Run Template
 
 ### TR-YYYYMMDD-001 — Feature Name
@@ -406,8 +405,86 @@ Browser responsive/visual verification and hosted CI have not run. PostgreSQL po
 - `M3.2 Admin UI Build`: **PASS**
 - `M3.2 Browser Runtime`: **NOT RUN / READY_FOR_TEST**
 - `M3.2 Overall`: **READY_FOR_TEST**
-- Milestone M3 overall status: **IN_PROGRESS**.
 
+---
+
+### TR-20260907-M3-CLOSURE — M3 Final Closure Verification
+
+- **Date/Time**: 2026-09-07T10:37:00+07:00
+- **Agent/Role**: Backend / Admin / QA
+- **Scope**: M3 Final Closure: Public Taxonomy Multi-site Deterministic Routing Scope, Admin Taxonomy Integration Completeness, Archive/Public Semantics Regression, and Revision-Term Transaction Atomicity.
+- **Dedicated Clean Database**: `m3_closure_clean_verify_db`
+
+**Executed checks**:
+1. **Public Taxonomy Multi-Site Deterministic Routing**:
+   - Fixed endpoint route to site-aware candidate: `GET /public/sites/:siteId/content-types/:typeKey/taxonomies/:taxKey/terms/:termKey/entries` (with route alias `/public/sites/:siteId/content/:typeKey/taxonomies/:taxKey/:termSlug`).
+   - Querying Site A returns strictly Site A content (`news-site-a`), total: 1.
+   - Querying Site B returns strictly Site B content (`news-site-b`), total: 1.
+   - Querying unknown site (`00000000-0000-0000-0000-000000000000`) returns 404 NOT_FOUND.
+   - Querying Site A with term existing only in Site B (`exclusive-b`) returns empty total: 0, with zero cross-site fallback.
+   - Querying with `?locale=vi` returns only Vietnamese entry and does not return English entry.
+   - Querying with `?locale=en` returns only English entry.
+   - Draft-only taxonomy assignment does not match public filter (total: 0) until published (total: 1).
+2. **Admin Taxonomy Integration Completeness**:
+   - `/taxonomies`: List, create, terms hierarchy, reparenting, activate/deactivate verified (`apps/admin/app/taxonomies/page.tsx`).
+   - ContentType Taxonomy Binding UI (`apps/admin/app/content-types/page.tsx`): Added "Taxonomies" action button and modal for configuring bound taxonomies (`isRequired`, `minTerms`, `maxTerms`, `sortOrder`) with strict scope filtering (Global ContentTypes can only bind Global Taxonomies; Site ContentTypes can only bind Global or own Site Taxonomies).
+   - Content Entry Taxonomy Editor (`apps/admin/app/content/page.tsx`): Added Dynamic Taxonomy Controls section deriving directly from `content_type_taxonomies`. Loads active terms for site, hierarchical tree depth indentation, multi-select checkboxes, initial terms population from `current_revision_id.terms`, preserves terms when saving, and sends complete taxonomy assignment snapshot.
+3. **Taxonomy Archive / Public Semantics Regression**:
+   - Deactivating a term: Content detail still resolvable/displayable with historical term; new revision cannot assign inactive term (400 Bad Request); public taxonomy navigation excludes inactive term (total: 0).
+   - Deactivating a taxonomy: Historical published content revision relation remains intact in database and resolvable; public taxonomy filter excludes inactive taxonomy (total: 0); no rows deleted in `content_revision_terms`.
+4. **M3 Revision-Term Transaction Atomicity**:
+   - Creating a draft update (Revision N+1) with invalid taxonomy assignment (cross-site term ID from Site B) fails with 400 Bad Request.
+   - PostgreSQL transaction rollback verified: `current_revision_id` remains N, `published_revision_id` remains unchanged, `content_entry_revisions` count is unchanged (zero orphan revisions), and no partial rows created in `content_revision_terms`.
+5. **Full Automated Verification Pipeline**:
+   - `pnpm lint`: PASS (0 errors, 0 warnings).
+   - `pnpm typecheck`: PASS (9 Turbo tasks across all packages).
+   - `pnpm test`: PASS (17 unit tests).
+   - `pnpm build`: PASS (6 Turbo tasks across web, admin, api, config, database, auth).
+   - `pnpm test:integration`: PASS (7 full integration test suites against clean PostgreSQL 16 DB `m3_closure_clean_verify_db`).
+   - `pnpm test:smoke`: PASS (Production Fastify readiness, unavailable DB 503, web and admin HTTP 200).
+   - `pnpm db:generate`: PASS ("No schema changes, nothing to migrate 😴").
+
+**M3 Final Status**:
+- `M3 Content Engine Backend/API`: **VERIFIED**
+- `M3 Taxonomy Backend/API`: **VERIFIED**
+- `M3 Admin UI Build`: **PASS**
+- `M3 Browser Runtime`: **NOT RUN / READY_FOR_TEST**
+- `M3 Overall`: **READY_FOR_TEST**
+
+---
+
+### TR-20260908-M3-AUDIT — M3 Audit Remediation and Independent Closure
+
+- **Date/Time**: 2026-09-08T07:09:00+07:00
+- **Environment**: Windows, Node 24.18.0, pnpm 11.17.0, PostgreSQL 16.14 portable (`127.0.0.1:55432`)
+- **Scope**: all findings in `AUDIT-001`, while preserving the complete M3 content/taxonomy closure.
+- **Clean databases**: `m3_final_fresh_20260908_0709` (fresh full migration) and `m3_final_upgrade_20260908_0709` (0000-0004 baseline then 0005 and repeat migrate).
+
+**Automated evidence**
+
+- `pnpm lint`: PASS, zero errors/warnings.
+- `pnpm typecheck`: PASS, 9/9 Turbo tasks.
+- `pnpm test`: PASS, 42/42 tests across 4 files.
+- `pnpm build`: PASS, 6/6 Turbo tasks; all Admin routes prerendered.
+- `pnpm test:integration`: PASS, 7/7 suites on the fresh database, including regional locale canonicalization and revision-pointer ownership/cascade checks.
+- `pnpm test:migration-upgrade`: PASS, clean 0004 baseline -> forward-only 0005 -> repeat migrate, with PostgreSQL catalog assertions.
+- `pnpm test:smoke`: PASS, production API live/ready behavior and web/admin HTTP.
+- `pnpm db:generate`: PASS, no schema drift.
+- `git diff --check`: PASS.
+
+**Browser runtime evidence**
+
+- In-app browser against real Admin (`localhost:3001`), API (`localhost:4000`) and PostgreSQL: PASS.
+- Login with synthetic super-admin, HttpOnly session persistence, dashboard, Users, Roles, Content Types, taxonomy binding modal, Taxonomies, and Content Entries all loaded through the configured API origin.
+- Created `Browser Matrix Entry` with optional numeric input blank, edited it to revision 2, published it, and observed `PUBLISHED` plus draft/published slug projection.
+- Logout cleared the session and redirected to `/login`.
+
+**Independent QA**
+
+- Independent QA reran lint, typecheck, 42 unit tests, 7 integration suites on `qa_m3_fresh_20260908_0703`, 0004->0005 upgrade on `qa_m3_upgrade_20260908_0703`, build, smoke and diff checks.
+- Final independent QA result: PASS; no open P0/P1/P2 finding.
+
+**Final status**: M3 Backend/API `VERIFIED`; Admin Build `VERIFIED`; Browser Runtime `VERIFIED`; M3 Overall `DONE`.
 
 
 

@@ -11,6 +11,7 @@
     "typecheck": "turbo run typecheck",
     "test": "vitest run --exclude '**/*.integration.test.ts'",
     "test:integration": "vitest run packages/database/src/database.integration.test.ts",
+    "test:migration-upgrade": "pnpm --filter @platform/database test:upgrade",
     "build": "turbo run build",
     "db:generate": "pnpm --filter @platform/database generate",
     "db:migrate": "pnpm --filter @platform/database migrate",

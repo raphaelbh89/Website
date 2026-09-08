@@ -21,6 +21,27 @@ Mỗi entry phải ghi:
 
 ---
 
+## 2026-09-08 — M2/M3 audit remediation started
+
+**Agent/Role:** Backend / Admin remediation; independent QA required before final closure.
+
+**Task:** Preserve current M3 closure and remediate reviewer findings before browser runtime, commit, or M4.
+
+**Pre-remediation working-tree snapshot:**
+
+- Modified: `.env.example`, `.gitignore`, `DEV_LOG.md`, `HANDOFF.md`, `PROGRESS.md`, `PROJECT_STATE.md`, `TEST_REPORT.md`.
+- Modified Admin: `apps/admin/app/content-types/page.tsx`, `content/page.tsx`, `login/page.tsx`, `page.tsx`, `roles/page.tsx`, `taxonomies/page.tsx`, `users/page.tsx`, `apps/admin/tsconfig.json`.
+- Modified API: `apps/api/src/app.test.ts`, `app.ts`, `content.service.ts`, `taxonomy.service.ts`.
+- Modified architecture/database: `docs/adr/0005-auth-session-strategy.md`, `packages/database/drizzle/meta/_journal.json`, `packages/database/src/database.integration.test.ts`, `index.ts`, `reset-test-db.ts`, `schema.ts`.
+- Untracked: `apps/admin/lib/api.ts`, `docs/adr/0010-media-storage-and-processing.md`, `packages/database/drizzle/0005_worried_starjammers.sql`, `packages/database/drizzle/meta/0005_snapshot.json`.
+- Baseline HEAD: `6f98114` (`feat(cms): implement M3.2 taxonomy engine and revision-term snapshots`). Branch: `main`.
+
+**Preservation rule:** no reset, checkout, stash, or commit until audit remediation and regression complete. M3 closure changes remain in place.
+
+**Resulting status:** `IN_PROGRESS`. ADR-0010 remains `Proposed`; M4 implementation forbidden in this task.
+
+---
+
 ## 2026-09-07 — Documentation Architecture Bootstrap
 
 **Agent/Role:** Lead Architect / Documentation Bootstrap
@@ -386,4 +407,55 @@ No production/service installation; .local-postgres artifacts kept and ignored.
 - Milestone M3 overall status: `IN_PROGRESS` (M3.1 and M3.2 both `READY_FOR_TEST`)
 **Next exact task:** User verification / Stop before M4 Media Library.
 
+---
 
+## 2026-09-07 10:40 — M3 Final Closure & M4.1 Architecture Checkpoint
+
+**Agent/Role:** Backend / Admin / QA / Architect
+**Task:** Hoàn tất M3 Final Closure và thiết lập kiến trúc M4.1 Media Library & Storage Provider Abstraction:
+1. Fixed public taxonomy route scope to site-aware endpoints: `GET /public/sites/:siteId/content-types/:typeKey/taxonomies/:taxKey/terms/:termKey/entries` & alias `/public/sites/:siteId/content/:typeKey/taxonomies/:taxKey/:termSlug`.
+2. Verified multi-site deterministic scoping, locale isolation, unknown site 404, cross-site non-fallback, and zero draft leakage.
+3. Implemented Admin ContentType Taxonomy Binding UI in `apps/admin/app/content-types/page.tsx` with modal, allowed taxonomy scope filtering, `isRequired`, `minTerms`, `maxTerms`, and `sortOrder`.
+4. Implemented dynamic Content Entry Taxonomy controls in `apps/admin/app/content/page.tsx` with hierarchical tree depth indentation, multi-select checkboxes, current revision terms loading, snapshot persistence, and copy-forward preservation.
+5. Implemented and verified Taxonomy Archive/Public semantics regression (historical term display preservation, inactive term assignment rejection, inactive taxonomy filtering exclusion, no relation rows deleted).
+6. Verified PostgreSQL transaction atomicity on revision creation failure (zero orphaned revisions, current pointer preservation, no partial term rows).
+7. Added 7th integration test suite covering all M3 Final Closure criteria on clean PostgreSQL 16 DB (`m3_closure_clean_verify_db`).
+8. Verified clean regression across monorepo: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm test:integration`, `pnpm test:smoke`, `pnpm db:generate`.
+
+**Files changed:**
+- `apps/api/src/taxonomy.service.ts`
+- `apps/api/src/content.service.ts`
+- `apps/api/src/app.ts`
+- `apps/admin/app/content-types/page.tsx`
+- `apps/admin/app/content/page.tsx`
+- `packages/database/src/database.integration.test.ts`
+- `PROJECT_STATE.md`, `PROGRESS.md`, `TEST_REPORT.md`, `DEV_LOG.md`, `HANDOFF.md`
+
+**Commands:**
+- `pnpm lint` -> PASS (0 errors, 0 warnings)
+- `pnpm typecheck` -> PASS (9 Turbo tasks)
+- `pnpm test` -> PASS (17 unit tests)
+- `pnpm build` -> PASS (6 Turbo tasks)
+- `pnpm test:integration` -> PASS (7 full integration suites on clean `m3_closure_clean_verify_db`)
+- `pnpm test:smoke` -> PASS (HTTP liveness/DB status tests)
+- `pnpm db:generate` -> PASS ("No schema changes, nothing to migrate 😴")
+
+**Resulting status:**
+- M3 Content Engine Backend/API = `VERIFIED`
+- M3 Taxonomy Backend/API = `VERIFIED`
+- M3 Admin UI Build = `PASS`
+- M3 Browser Runtime = `NOT RUN / READY_FOR_TEST`
+- M3 Overall = `READY_FOR_TEST`
+**Next exact task:** M4.1 Media Library & Object Storage Architecture Checkpoint (DO NOT implement M4 before ADR acceptance).
+
+---
+
+## 2026-09-08 07:09 — M3 Audit Remediation Closed
+
+**Agent/Role:** Backend / Admin / QA / Architect
+
+Closed `AUDIT-001` without discarding the pre-existing dirty M3 closure. Unified the Admin API client, removed raw auth tokens, hardened cookie-request provenance, enforced UUIDv7 and mandatory optimistic concurrency, made CMS schema/default/select and optional-field behavior strict, canonicalized locales through one shared service, added composite revision-pointer ownership FKs through forward migration 0005, and added fresh/upgrade drift verification.
+
+Full regression passed: lint; typecheck 9/9; unit 42/42; build 6/6; integration 7/7 on `m3_final_fresh_20260908_0709`; 0004->0005 upgrade and repeat migration on `m3_final_upgrade_20260908_0709`; production smoke; and zero migration drift. Complete browser runtime passed login through create/edit/publish/logout. Independent QA passed with no open P0/P1/P2 finding.
+
+**Resulting status:** M3 `DONE`. Stop before M4 implementation; ADR-0010 remains a Proposed architecture checkpoint.

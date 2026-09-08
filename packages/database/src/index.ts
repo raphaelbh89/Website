@@ -20,6 +20,7 @@ export {
   contentTypeTaxonomies,
   contentRevisionTerms,
 } from './schema.js';
+export { v7 } from 'uuid';
 
 export function createDatabase(connectionString: string) {
   const pool = new pg.Pool({

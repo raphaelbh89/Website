@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { apiFetch } from '@/lib/api';
 
 interface Taxonomy {
   id: string;
@@ -70,23 +71,22 @@ export default function TaxonomiesAdminPage() {
       try {
         setLoading(true);
         const [sitesRes, taxRes] = await Promise.all([
-          fetch('/sites', { credentials: 'include' }),
-          fetch('/taxonomies', { credentials: 'include' }),
+          apiFetch<{ sites?: Site[] }>('/sites'),
+          apiFetch<{ taxonomies?: Taxonomy[] }>('/taxonomies'),
         ]);
 
-        if (sitesRes.ok) {
-          const sData = await sitesRes.json();
-          const siteList = sData.sites || [];
+        if (sitesRes.ok && sitesRes.data) {
+          const siteList = sitesRes.data.sites || [];
           setSites(siteList);
-          if (siteList.length > 0) {
+          if (siteList.length > 0 && siteList[0]) {
             setSelectedSiteId(siteList[0].id);
           }
         }
 
-        if (taxRes.ok) {
-          const tData = await taxRes.json();
+        if (taxRes.ok && taxRes.data) {
+          const tData = taxRes.data;
           setTaxonomies(tData.taxonomies || []);
-          if (tData.taxonomies?.length > 0) {
+          if (tData.taxonomies && tData.taxonomies.length > 0 && tData.taxonomies[0]) {
             setSelectedTaxonomy(tData.taxonomies[0]);
           }
         }
@@ -107,12 +107,10 @@ export default function TaxonomiesAdminPage() {
 
     async function loadTerms() {
       try {
-        const res = await fetch(
-          `/sites/${siteId}/taxonomies/${taxKey}/terms?tree=true`,
-          { credentials: 'include' }
+        const { data, ok } = await apiFetch<{ terms?: TaxonomyTerm[] }>(
+          `/sites/${siteId}/taxonomies/${taxKey}/terms?tree=true`
         );
-        if (res.ok) {
-          const data = await res.json();
+        if (ok && data) {
           setTerms(data.terms || []);
         } else {
           setTerms([]);
@@ -141,19 +139,15 @@ export default function TaxonomiesAdminPage() {
         payload.siteId = selectedSiteId;
       }
 
-      const res = await fetch('/taxonomies', {
+      const { data, ok, error } = await apiFetch<{ taxonomy: Taxonomy }>('/taxonomies', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.message || 'Failed to create taxonomy');
+      if (!ok || !data) {
+        throw new Error(error || 'Failed to create taxonomy');
       }
 
-      const data = await res.json();
       setTaxonomies((prev) => [...prev, data.taxonomy]);
       setSelectedTaxonomy(data.taxonomy);
       setShowTaxModal(false);
@@ -176,12 +170,10 @@ export default function TaxonomiesAdminPage() {
     try {
       if (editingTerm) {
         // Update / Move term
-        const res = await fetch(
+        const { ok, error } = await apiFetch(
           `/sites/${selectedSiteId}/taxonomies/${selectedTaxonomy.key}/terms/${editingTerm.id}`,
           {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
             body: JSON.stringify({
               name: termName,
               description: termDesc || null,
@@ -191,18 +183,15 @@ export default function TaxonomiesAdminPage() {
           }
         );
 
-        if (!res.ok) {
-          const errData = await res.json();
-          throw new Error(errData.message || 'Failed to update term');
+        if (!ok) {
+          throw new Error(error || 'Failed to update term');
         }
       } else {
         // Create new term
-        const res = await fetch(
+        const { ok, error } = await apiFetch(
           `/sites/${selectedSiteId}/taxonomies/${selectedTaxonomy.key}/terms`,
           {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
             body: JSON.stringify({
               key: termKey,
               name: termName,
@@ -213,20 +202,17 @@ export default function TaxonomiesAdminPage() {
           }
         );
 
-        if (!res.ok) {
-          const errData = await res.json();
-          throw new Error(errData.message || 'Failed to create term');
+        if (!ok) {
+          throw new Error(error || 'Failed to create term');
         }
       }
 
       // Reload terms
-      const refRes = await fetch(
-        `/sites/${selectedSiteId}/taxonomies/${selectedTaxonomy.key}/terms?tree=true`,
-        { credentials: 'include' }
+      const refRes = await apiFetch<{ terms?: TaxonomyTerm[] }>(
+        `/sites/${selectedSiteId}/taxonomies/${selectedTaxonomy.key}/terms?tree=true`
       );
-      if (refRes.ok) {
-        const d = await refRes.json();
-        setTerms(d.terms || []);
+      if (refRes.ok && refRes.data) {
+        setTerms(refRes.data.terms || []);
       }
 
       setShowTermModal(false);
@@ -249,27 +235,23 @@ export default function TaxonomiesAdminPage() {
 
     const action = term.is_active ? 'deactivate' : 'activate';
     try {
-      const res = await fetch(
+      const { ok, error } = await apiFetch(
         `/sites/${selectedSiteId}/taxonomies/${selectedTaxonomy.key}/terms/${term.id}/${action}`,
         {
           method: 'POST',
-          credentials: 'include',
         }
       );
 
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.message || `Failed to ${action} term`);
+      if (!ok) {
+        throw new Error(error || `Failed to ${action} term`);
       }
 
       // Reload terms
-      const refRes = await fetch(
-        `/sites/${selectedSiteId}/taxonomies/${selectedTaxonomy.key}/terms?tree=true`,
-        { credentials: 'include' }
+      const refRes = await apiFetch<{ terms?: TaxonomyTerm[] }>(
+        `/sites/${selectedSiteId}/taxonomies/${selectedTaxonomy.key}/terms?tree=true`
       );
-      if (refRes.ok) {
-        const d = await refRes.json();
-        setTerms(d.terms || []);
+      if (refRes.ok && refRes.data) {
+        setTerms(refRes.data.terms || []);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : `Error toggling term activation`);

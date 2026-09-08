@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { apiFetch } from '@/lib/api';
 
 interface CmsField {
   key: string;
@@ -39,6 +40,14 @@ interface Site {
   name: string;
 }
 
+interface TaxonomySummary {
+  id: string;
+  key: string;
+  name: string;
+  scope_kind: 'global' | 'site';
+  site_id: string | null;
+}
+
 export default function ContentTypesPage() {
   const [types, setTypes] = useState<ContentType[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
@@ -62,22 +71,141 @@ export default function ContentTypesPage() {
   // View Schema Modal state
   const [viewingType, setViewingType] = useState<ContentType | null>(null);
 
+  // Taxonomy Binding Modal state
+  const [bindingType, setBindingType] = useState<ContentType | null>(null);
+  const [allTaxonomies, setAllTaxonomies] = useState<TaxonomySummary[]>([]);
+  const [bindings, setBindings] = useState<{
+    taxonomyId: string;
+    taxonomyKey?: string;
+    taxonomyName?: string;
+    isRequired: boolean;
+    minTerms: number;
+    maxTerms: number | null;
+    sortOrder: number;
+  }[]>([]);
+  const [bindingLoading, setBindingLoading] = useState(false);
+  const [bindingError, setBindingError] = useState<string | null>(null);
+  const [bindingSubmitting, setBindingSubmitting] = useState(false);
+
+  const fetchAllTaxonomies = async () => {
+    try {
+      const { data, ok } = await apiFetch<{ taxonomies?: TaxonomySummary[] }>('/taxonomies');
+      if (ok && data) {
+        setAllTaxonomies(data.taxonomies || []);
+      }
+    } catch {
+      // Ignore
+    }
+  };
+
+  const openBindingModal = async (type: ContentType) => {
+    setBindingType(type);
+    setBindingError(null);
+    setBindingLoading(true);
+    try {
+      await fetchAllTaxonomies();
+      const { data, ok } = await apiFetch<{ bindings?: Record<string, unknown>[] }>(`/content-types/${type.id}/taxonomies`);
+      if (ok && data) {
+        const mapped = (data.bindings || []).map((b: Record<string, unknown>) => ({
+          taxonomyId: b.taxonomy_id as string,
+          taxonomyKey: b.taxonomy_key as string,
+          taxonomyName: b.taxonomy_name as string,
+          isRequired: Boolean(b.is_required),
+          minTerms: Number(b.min_terms || 0),
+          maxTerms: b.max_terms !== null && b.max_terms !== undefined ? Number(b.max_terms) : null,
+          sortOrder: Number(b.sort_order || 0),
+        }));
+        setBindings(mapped);
+      } else {
+        setBindings([]);
+      }
+    } catch (err) {
+      setBindingError(err instanceof Error ? err.message : 'Failed to load taxonomy bindings');
+    } finally {
+      setBindingLoading(false);
+    }
+  };
+
+  const handleSaveBindings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bindingType) return;
+    setBindingSubmitting(true);
+    setBindingError(null);
+    try {
+      const payload = {
+        taxonomies: bindings.map((b) => ({
+          taxonomyId: b.taxonomyId,
+          isRequired: b.isRequired,
+          minTerms: b.minTerms,
+          maxTerms: b.maxTerms,
+          sortOrder: b.sortOrder,
+        })),
+      };
+      const { ok, error } = await apiFetch(`/content-types/${bindingType.id}/taxonomies`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
+      if (!ok) {
+        throw new Error(error || 'Failed to save taxonomy bindings');
+      }
+      setBindingType(null);
+    } catch (err) {
+      setBindingError(err instanceof Error ? err.message : 'Error saving bindings');
+    } finally {
+      setBindingSubmitting(false);
+    }
+  };
+
+  const addBindingRow = () => {
+    if (!bindingType) return;
+    // Find first compatible taxonomy not yet bound
+    const compatible = allTaxonomies.filter((t) => {
+      if (bindingType.scopeKind === 'global') {
+        return t.scope_kind === 'global';
+      }
+      return t.scope_kind === 'global' || (t.scope_kind === 'site' && t.site_id === bindingType.siteId);
+    });
+    const unbound = compatible.find((c) => !bindings.some((b) => b.taxonomyId === c.id));
+    if (unbound) {
+      setBindings([
+        ...bindings,
+        {
+          taxonomyId: unbound.id,
+          taxonomyKey: unbound.key,
+          taxonomyName: unbound.name,
+          isRequired: false,
+          minTerms: 0,
+          maxTerms: null,
+          sortOrder: bindings.length,
+        },
+      ]);
+    }
+  };
+
+  const removeBindingRow = (index: number) => {
+    setBindings(bindings.filter((_, i) => i !== index));
+  };
+
+  const updateBindingRow = (index: number, patch: Partial<(typeof bindings)[0]>) => {
+    const updated = [...bindings];
+    if (updated[index]) {
+      updated[index] = { ...updated[index]!, ...patch };
+      setBindings(updated);
+    }
+  };
+
   const fetchTypes = async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('http://localhost:4000/content-types', {
-        headers: { 'X-Requested-With': 'XMLHttpRequest' },
-        credentials: 'include',
-      });
-      if (!res.ok) {
-        if (res.status === 401) {
+      const { data, ok, status } = await apiFetch<{ contentTypes?: ContentType[] }>('/content-types');
+      if (!ok || !data) {
+        if (status === 401) {
           window.location.href = '/login';
           return;
         }
-        throw new Error(`Failed to load content types (${res.status})`);
+        throw new Error(`Failed to load content types (${status})`);
       }
-      const data = await res.json();
       setTypes(data.contentTypes || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error loading content types');
@@ -88,14 +216,10 @@ export default function ContentTypesPage() {
 
   const fetchSites = async () => {
     try {
-      const res = await fetch('http://localhost:4000/sites', {
-        headers: { 'X-Requested-With': 'XMLHttpRequest' },
-        credentials: 'include',
-      });
-      if (res.ok) {
-        const data = await res.json();
+      const { data, ok } = await apiFetch<{ sites?: Site[] }>('/sites');
+      if (ok && data) {
         setSites(data.sites || []);
-        if (data.sites?.length > 0) setSiteId(data.sites[0].id);
+        if (data.sites && data.sites.length > 0 && data.sites[0]) setSiteId(data.sites[0].id);
       }
     } catch {
       // Ignore sites fetch error if not available
@@ -137,13 +261,8 @@ export default function ContentTypesPage() {
     setSubmitting(true);
 
     try {
-      const res = await fetch('http://localhost:4000/content-types', {
+      const { ok, error } = await apiFetch('/content-types', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest',
-        },
-        credentials: 'include',
         body: JSON.stringify({
           key,
           name,
@@ -158,9 +277,8 @@ export default function ContentTypesPage() {
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || 'Failed to create content type');
+      if (!ok) {
+        throw new Error(error || 'Failed to create content type');
       }
 
       setShowCreateModal(false);
@@ -265,12 +383,20 @@ export default function ContentTypesPage() {
                     {t.dataSchema?.fields?.length || 0} fields
                   </td>
                   <td style={{ padding: '1rem' }}>
-                    <button
-                      onClick={() => setViewingType(t)}
-                      style={{ padding: '0.35rem 0.75rem', background: '#334155', color: '#e2e8f0', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}
-                    >
-                      View Schema
-                    </button>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button
+                        onClick={() => openBindingModal(t)}
+                        style={{ padding: '0.35rem 0.75rem', background: '#0284c7', color: '#ffffff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}
+                      >
+                        Taxonomies
+                      </button>
+                      <button
+                        onClick={() => setViewingType(t)}
+                        style={{ padding: '0.35rem 0.75rem', background: '#334155', color: '#e2e8f0', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}
+                      >
+                        View Schema
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -475,6 +601,153 @@ export default function ContentTypesPage() {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* Taxonomy Binding Modal */}
+      {bindingType && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '1rem' }}>
+          <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '8px', width: '100%', maxWidth: '750px', maxHeight: '90vh', overflowY: 'auto', padding: '1.5rem' }}>
+            <h2 style={{ margin: '0 0 0.5rem', fontSize: '1.25rem' }}>Taxonomy Bindings: {bindingType.name} ({bindingType.key})</h2>
+            <p style={{ margin: '0 0 1rem', color: '#94a3b8', fontSize: '0.875rem' }}>
+              Configure allowed taxonomies, required flags, and min/max term constraints for this content type.
+            </p>
+
+            {bindingError && (
+              <div style={{ padding: '0.75rem', background: '#ef444422', border: '1px solid #ef4444', color: '#fca5a5', borderRadius: '4px', marginBottom: '1rem', fontSize: '0.875rem' }}>
+                {bindingError}
+              </div>
+            )}
+
+            {bindingLoading ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8' }}>Loading bindings...</div>
+            ) : (
+              <form onSubmit={handleSaveBindings}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                  <span style={{ fontSize: '0.9rem', color: '#cbd5e1', fontWeight: 600 }}>Attached Taxonomies ({bindings.length})</span>
+                  <button
+                    type="button"
+                    onClick={addBindingRow}
+                    style={{ padding: '0.35rem 0.75rem', background: '#0284c7', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}
+                  >
+                    + Add Taxonomy Binding
+                  </button>
+                </div>
+
+                {bindings.length === 0 ? (
+                  <div style={{ padding: '2rem', textAlign: 'center', background: '#0f172a', borderRadius: '6px', color: '#64748b', marginBottom: '1.5rem' }}>
+                    No taxonomies bound to this Content Type. Click &quot;+ Add Taxonomy Binding&quot; to associate one.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.5rem' }}>
+                    {bindings.map((b, idx) => {
+                      // Filter allowed taxonomies: global or matching site
+                      const allowedTax = allTaxonomies.filter((t) => {
+                        if (bindingType.scopeKind === 'global') return t.scope_kind === 'global';
+                        return t.scope_kind === 'global' || (t.scope_kind === 'site' && t.site_id === bindingType.siteId);
+                      });
+
+                      return (
+                        <div key={idx} style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '6px', padding: '0.85rem' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto', gap: '0.75rem', alignItems: 'center' }}>
+                            <div>
+                              <label style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.2rem' }}>Taxonomy</label>
+                              <select
+                                value={b.taxonomyId}
+                                onChange={(e) => {
+                                  const selected = allTaxonomies.find((t) => t.id === e.target.value);
+                                  updateBindingRow(idx, {
+                                    taxonomyId: e.target.value,
+                                    taxonomyKey: selected?.key,
+                                    taxonomyName: selected?.name,
+                                  });
+                                }}
+                                style={{ width: '100%', padding: '0.4rem', background: '#1e293b', border: '1px solid #475569', color: 'white', borderRadius: '4px', fontSize: '0.85rem' }}
+                              >
+                                {allowedTax.map((t) => (
+                                  <option key={t.id} value={t.id}>
+                                    {t.name} ({t.key}) [{t.scope_kind.toUpperCase()}]
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div>
+                              <label style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.2rem' }}>Min Terms</label>
+                              <input
+                                type="number"
+                                min={0}
+                                value={b.minTerms}
+                                onChange={(e) => updateBindingRow(idx, { minTerms: Math.max(0, parseInt(e.target.value) || 0) })}
+                                style={{ width: '100%', padding: '0.4rem', background: '#1e293b', border: '1px solid #475569', color: 'white', borderRadius: '4px', fontSize: '0.85rem' }}
+                              />
+                            </div>
+
+                            <div>
+                              <label style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.2rem' }}>Max Terms</label>
+                              <input
+                                type="number"
+                                min={1}
+                                placeholder="Unlimited"
+                                value={b.maxTerms ?? ''}
+                                onChange={(e) => updateBindingRow(idx, { maxTerms: e.target.value ? parseInt(e.target.value) : null })}
+                                style={{ width: '100%', padding: '0.4rem', background: '#1e293b', border: '1px solid #475569', color: 'white', borderRadius: '4px', fontSize: '0.85rem' }}
+                              />
+                            </div>
+
+                            <div>
+                              <label style={{ display: 'block', fontSize: '0.75rem', color: '#94a3b8', marginBottom: '0.2rem' }}>Sort Order</label>
+                              <input
+                                type="number"
+                                value={b.sortOrder}
+                                onChange={(e) => updateBindingRow(idx, { sortOrder: parseInt(e.target.value) || 0 })}
+                                style={{ width: '100%', padding: '0.4rem', background: '#1e293b', border: '1px solid #475569', color: 'white', borderRadius: '4px', fontSize: '0.85rem' }}
+                              />
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => removeBindingRow(idx)}
+                              style={{ padding: '0.4rem 0.6rem', background: '#dc2626', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', marginTop: '1rem' }}
+                            >
+                              ✕
+                            </button>
+                          </div>
+
+                          <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', color: '#cbd5e1', cursor: 'pointer' }}>
+                              <input
+                                type="checkbox"
+                                checked={b.isRequired}
+                                onChange={(e) => updateBindingRow(idx, { isRequired: e.target.checked })}
+                              />
+                              Required (Entry must have at least 1 term)
+                            </label>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => setBindingType(null)}
+                    style={{ padding: '0.5rem 1rem', background: '#334155', color: '#e2e8f0', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={bindingSubmitting}
+                    style={{ padding: '0.5rem 1rem', background: '#0284c7', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
+                  >
+                    {bindingSubmitting ? 'Saving...' : 'Save Bindings'}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

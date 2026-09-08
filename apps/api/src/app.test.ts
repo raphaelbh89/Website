@@ -29,6 +29,29 @@ describe('Health and Readiness Probes', () => {
 });
 
 describe('CSRF and Origin Validation Hook', () => {
+  it('allows browser preflight for every supported mutation method', async () => {
+    const app = buildApp({
+      checkDatabase: async () => {},
+      corsOrigin: 'http://localhost:3001',
+    });
+    try {
+      const response = await app.inject({
+        method: 'OPTIONS',
+        url: '/content/example',
+        headers: {
+          origin: 'http://localhost:3001',
+          'access-control-request-method': 'PATCH',
+          'access-control-request-headers': 'content-type,x-requested-with',
+        },
+      });
+      expect(response.statusCode).toBe(204);
+      expect(response.headers['access-control-allow-methods']).toContain('PATCH');
+      expect(response.headers['access-control-allow-methods']).toContain('DELETE');
+    } finally {
+      await app.close();
+    }
+  });
+
   it('accepts allowed origins on mutating endpoints', async () => {
     const app = buildApp({
       checkDatabase: async () => {},
@@ -151,7 +174,7 @@ describe('CSRF and Origin Validation Hook', () => {
     }
   });
 
-  it('allows non-browser requests without Origin header on mutating endpoints', async () => {
+  it('allows non-browser requests without Origin header on mutating endpoints when no session cookie is present', async () => {
     const app = buildApp({
       checkDatabase: async () => {},
       corsOrigin: 'http://localhost:3001',
@@ -166,6 +189,98 @@ describe('CSRF and Origin Validation Hook', () => {
         payload: { email: 'test@example.com', password: 'test' },
       });
       expect(res.statusCode).not.toBe(403);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects cookie-authenticated mutating request when Origin and Referer are absent (negative test)', async () => {
+    const app = buildApp({
+      checkDatabase: async () => {},
+      corsOrigin: 'http://localhost:3001',
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/logout',
+        headers: {
+          cookie: 'platform_session=fake-session-token',
+          'content-type': 'application/json',
+        },
+        payload: {},
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json()).toEqual({
+        error: 'FORBIDDEN',
+        message: 'Origin or Referer header required for cookie-authenticated mutating requests',
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('does not treat X-Requested-With as a replacement for cookie request provenance', async () => {
+    const app = buildApp({
+      checkDatabase: async () => {},
+      corsOrigin: 'http://localhost:3001',
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/logout',
+        headers: {
+          cookie: 'platform_session=fake-session-token',
+          'content-type': 'application/json',
+          'x-requested-with': 'XMLHttpRequest',
+        },
+        payload: {},
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().message).toContain('Origin or Referer header required');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('allows Bearer-authenticated mutating request without Origin header (API client flow)', async () => {
+    const app = buildApp({
+      checkDatabase: async () => {},
+      corsOrigin: 'http://localhost:3001',
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/logout',
+        headers: {
+          authorization: 'Bearer fake-bearer-token',
+          'content-type': 'application/json',
+        },
+      });
+      // Should not be rejected by CSRF hook
+      expect(res.statusCode).not.toBe(403);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('does not let a Bearer header bypass CSRF checks when a session cookie is also present', async () => {
+    const app = buildApp({
+      checkDatabase: async () => {},
+      corsOrigin: 'http://localhost:3001',
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/logout',
+        headers: {
+          authorization: 'Bearer fake-bearer-token',
+          cookie: 'platform_session=fake-session-token',
+          'content-type': 'application/json',
+        },
+        payload: {},
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().message).toContain('Origin or Referer header required');
     } finally {
       await app.close();
     }

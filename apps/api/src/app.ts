@@ -69,6 +69,7 @@ export function buildApp(
       return cb(null, false);
     },
     credentials: true,
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
 
   // 3. Register Fastify Rate Limit Plugin
@@ -102,6 +103,10 @@ export function buildApp(
     const origin = request.headers.origin;
     const referer = request.headers.referer;
 
+    // Determine transport mode:
+    // If request has cookie authentication (e.g. session cookie present)
+    const hasSessionCookie = Boolean(request.cookies && request.cookies[cookieName]);
+
     // A. Origin header verification
     if (origin) {
       if (!allowedOrigins.includes(origin) && !allowedOrigins.includes('*')) {
@@ -117,6 +122,12 @@ export function buildApp(
       } catch {
         return reply.code(403).send({ error: 'FORBIDDEN', message: 'Malformed referer header' });
       }
+    } else if (hasSessionCookie) {
+      // Custom headers are defense-in-depth, but never replace provenance for cookie-authenticated mutations.
+      return reply.code(403).send({
+        error: 'FORBIDDEN',
+        message: 'Origin or Referer header required for cookie-authenticated mutating requests',
+      });
     }
 
     // C. Content-Type verification for JSON endpoints with payload
@@ -187,7 +198,6 @@ export function buildApp(
 
     return {
       user: result.user,
-      token: result.rawToken,
     };
   });
 
@@ -912,9 +922,12 @@ export function buildApp(
     }
     const { siteId, typeKey, slug } = request.params as { siteId: string; typeKey: string; slug: string };
     const query = request.query as { locale?: string };
-    const res = await contentService.getPublicContentEntry(siteId, typeKey, slug, query?.locale || 'vi');
+    if (!query?.locale || typeof query.locale !== 'string' || !query.locale.trim()) {
+      return reply.code(400).send({ error: 'BAD_REQUEST', message: 'Query parameter "locale" is required' });
+    }
+    const res = await contentService.getPublicContentEntry(siteId, typeKey, slug, query.locale);
     if (res.error) {
-      return reply.code(res.status ?? 404).send({ error: 'NOT_FOUND', message: res.error });
+      return reply.code(res.status ?? 404).send({ error: res.status === 400 ? 'BAD_REQUEST' : 'NOT_FOUND', message: res.error });
     }
     return res;
   });
@@ -1232,37 +1245,38 @@ export function buildApp(
   );
 
   // ---------------------------------------------------------------------------
-  // 17. M3.2 Public Filtering Proof Route (by Taxonomy & Term)
+  // 17. M3.2 / M3 Closure Public Taxonomy Filtering Routes
   // ---------------------------------------------------------------------------
 
-  app.get(
-    '/public/sites/:siteId/content/:typeKey/taxonomies/:taxKey/:termSlug',
-    async (request: FastifyRequest, reply: FastifyReply) => {
-      reply.header('Cache-Control', 'public, max-age=60');
-      if (!taxonomyService) {
-        return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
-      }
-      const { siteId, typeKey, taxKey, termSlug } = request.params as {
-        siteId: string;
-        typeKey: string;
-        taxKey: string;
-        termSlug: string;
-      };
-      const query = request.query as { locale?: string };
-      const res = await taxonomyService.queryPublicContentByTerm(
-        siteId,
-        typeKey,
-        taxKey,
-        termSlug,
-        query?.locale || 'vi'
-      );
-      if (res.error) {
-        return reply.code(res.status ?? 404).send({ error: 'NOT_FOUND', message: res.error });
-      }
-      return res;
+  const handlePublicTaxonomyQuery = async (request: FastifyRequest, reply: FastifyReply) => {
+    reply.header('Cache-Control', 'public, max-age=60');
+    if (!taxonomyService) {
+      return reply.code(503).send({ error: 'SERVICE_UNAVAILABLE', message: 'Database not configured' });
     }
-  );
+    const params = request.params as Record<string, string | undefined>;
+    const siteId = params.siteId || '';
+    const typeKey = params.typeKey || '';
+    const taxKey = params.taxKey || '';
+    const termSlug = params.termKey || params.termSlug || '';
+    const query = request.query as { locale?: string };
+    if (!query?.locale || typeof query.locale !== 'string' || !query.locale.trim()) {
+      return reply.code(400).send({ error: 'BAD_REQUEST', message: 'Query parameter "locale" is required' });
+    }
+    const res = await taxonomyService.queryPublicContentByTerm(
+      siteId,
+      typeKey,
+      taxKey,
+      termSlug,
+      query.locale
+    );
+    if (res.error) {
+      return reply.code(res.status ?? 404).send({ error: res.status === 400 ? 'BAD_REQUEST' : 'NOT_FOUND', message: res.error });
+    }
+    return res;
+  };
+
+  app.get('/public/sites/:siteId/content-types/:typeKey/taxonomies/:taxKey/terms/:termKey/entries', handlePublicTaxonomyQuery);
+  app.get('/public/sites/:siteId/content/:typeKey/taxonomies/:taxKey/:termSlug', handlePublicTaxonomyQuery);
 
   return app;
 }
-

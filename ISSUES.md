@@ -15,6 +15,7 @@
 | ARCH-002 | S2 | RESOLVED | RBAC | Permission scope strategy finalized (GLOBAL/SITE/CAMPUS/RESOURCE) and accepted in ADR-0006 | Architect/Security |
 | ARCH-003 | S2 | RESOLVED | CMS Core | CMS Content Engine Schema, Canonical Field Registry allow-list, Data/UI schema separation, and Revision-Pointer model finalized and accepted in ADR-0007 & ADR-0008 | Architect/Backend |
 | ENV-M1-001 | S2 | RESOLVED | QA environment | Resolved locally via portable PostgreSQL 16 on 127.0.0.1:55432; independent verification rerun passed; see TR-20260907-M1-RERUN | Orchestrator/QA |
+| AUDIT-001 | S1 | VERIFIED | M2/M3 runtime/security/data | Admin API origin, auth/CSRF, UUIDv7, concurrency, schema/default/select validation, locale neutrality, revision ownership and migration drift reconciled without regressing M3 closure; TR-20260908-M3-AUDIT | Backend/Admin/QA |
 
 ## Issue Template
 

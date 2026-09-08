@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { apiFetch } from '@/lib/api';
 
 interface UserItem {
   id: string;
@@ -39,7 +40,6 @@ interface AssignmentItem {
 
 export default function UsersManagementPage() {
   const router = useRouter();
-  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:4000';
 
   const [usersList, setUsersList] = useState<UserItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -79,23 +79,19 @@ export default function UsersManagementPage() {
         q.set('search', searchQuery.trim());
       }
 
-      const res = await fetch(`${apiBase}/users?${q.toString()}`, {
-        method: 'GET',
-        credentials: 'include',
-      });
+      const { data, ok, status } = await apiFetch<{ items: UserItem[]; total: number; page: number }>(`/users?${q.toString()}`);
 
-      if (res.status === 401) {
+      if (status === 401) {
         router.push('/login');
         return;
       }
 
-      if (!res.ok) {
+      if (!ok || !data) {
         setErrorMessage('Failed to load users.');
         setLoading(false);
         return;
       }
 
-      const data = await res.json();
       setUsersList(data.items);
       setTotal(data.total);
       setPage(data.page);
@@ -104,7 +100,7 @@ export default function UsersManagementPage() {
     } finally {
       setLoading(false);
     }
-  }, [apiBase, router, search]);
+  }, [router, search]);
 
   useEffect(() => {
     void fetchUsers(1);
@@ -116,13 +112,8 @@ export default function UsersManagementPage() {
     setCreateError(null);
 
     try {
-      const res = await fetch(`${apiBase}/users`, {
+      const { data, ok, error } = await apiFetch<{ user?: UserItem; message?: string }>('/users', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest',
-        },
-        credentials: 'include',
         body: JSON.stringify({
           email: createEmail,
           name: createName,
@@ -131,9 +122,8 @@ export default function UsersManagementPage() {
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        setCreateError(data.message || 'Failed to create user');
+      if (!ok) {
+        setCreateError(error || data?.message || 'Failed to create user');
         setCreateLoading(false);
         return;
       }
@@ -156,18 +146,12 @@ export default function UsersManagementPage() {
     }
 
     try {
-      const res = await fetch(`${apiBase}/users/${user.id}/deactivate`, {
+      const { ok, error } = await apiFetch(`/users/${user.id}/deactivate`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest',
-        },
-        credentials: 'include',
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        alert(`Error: ${data.message || 'Failed to deactivate user'}`);
+      if (!ok) {
+        alert(`Error: ${error || 'Failed to deactivate user'}`);
         return;
       }
 
@@ -182,38 +166,26 @@ export default function UsersManagementPage() {
     setAssignError(null);
     try {
       // Fetch user's current assignments
-      const assignRes = await fetch(`${apiBase}/users/${user.id}/roles`, {
-        method: 'GET',
-        credentials: 'include',
-      });
-      if (assignRes.ok) {
-        const assignData = await assignRes.json();
-        setUserAssignments(assignData.assignments);
+      const assignRes = await apiFetch<{ assignments: AssignmentItem[] }>(`/users/${user.id}/roles`);
+      if (assignRes.ok && assignRes.data) {
+        setUserAssignments(assignRes.data.assignments);
       }
 
       // Fetch available roles
-      const rolesRes = await fetch(`${apiBase}/roles`, {
-        method: 'GET',
-        credentials: 'include',
-      });
-      if (rolesRes.ok) {
-        const rolesData = await rolesRes.json();
-        setAvailableRoles(rolesData.roles);
-        if (rolesData.roles.length > 0) {
-          setAssignRoleId(rolesData.roles[0].id);
+      const rolesRes = await apiFetch<{ roles: RoleItem[] }>('/roles');
+      if (rolesRes.ok && rolesRes.data) {
+        setAvailableRoles(rolesRes.data.roles);
+        if (rolesRes.data.roles.length > 0 && rolesRes.data.roles[0]) {
+          setAssignRoleId(rolesRes.data.roles[0].id);
         }
       }
 
       // Fetch available sites
-      const sitesRes = await fetch(`${apiBase}/sites`, {
-        method: 'GET',
-        credentials: 'include',
-      });
-      if (sitesRes.ok) {
-        const sitesData = await sitesRes.json();
-        setAvailableSites(sitesData.sites);
-        if (sitesData.sites.length > 0) {
-          setAssignSiteId(sitesData.sites[0].id);
+      const sitesRes = await apiFetch<{ sites: SiteItem[] }>('/sites');
+      if (sitesRes.ok && sitesRes.data) {
+        setAvailableSites(sitesRes.data.sites);
+        if (sitesRes.data.sites.length > 0 && sitesRes.data.sites[0]) {
+          setAssignSiteId(sitesRes.data.sites[0].id);
         }
       }
     } catch {
@@ -235,30 +207,21 @@ export default function UsersManagementPage() {
         scopeId: assignScopeKind === 'site' ? assignSiteId : null,
       };
 
-      const res = await fetch(`${apiBase}/users/${selectedUserForRoles.id}/roles`, {
+      const { ok, error } = await apiFetch(`/users/${selectedUserForRoles.id}/roles`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest',
-        },
-        credentials: 'include',
         body: JSON.stringify(body),
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        setAssignError(data.message || 'Failed to assign role');
+      if (!ok) {
+        setAssignError(error || 'Failed to assign role');
         setAssignLoading(false);
         return;
       }
 
       // Refresh assignments
-      const refreshRes = await fetch(`${apiBase}/users/${selectedUserForRoles.id}/roles`, {
-        credentials: 'include',
-      });
-      if (refreshRes.ok) {
-        const refreshData = await refreshRes.json();
-        setUserAssignments(refreshData.assignments);
+      const refreshRes = await apiFetch<{ assignments: AssignmentItem[] }>(`/users/${selectedUserForRoles.id}/roles`);
+      if (refreshRes.ok && refreshRes.data) {
+        setUserAssignments(refreshRes.data.assignments);
       }
     } catch {
       setAssignError('Network error while assigning role.');
@@ -272,21 +235,20 @@ export default function UsersManagementPage() {
     if (!confirm('Are you sure you want to remove this role assignment?')) return;
 
     try {
-      const res = await fetch(`${apiBase}/users/${selectedUserForRoles.id}/roles/${assignmentId}`, {
+      const { ok, error } = await apiFetch(`/users/${selectedUserForRoles.id}/roles/${assignmentId}`, {
         method: 'DELETE',
-        headers: {
-          'X-Requested-With': 'XMLHttpRequest',
-        },
-        credentials: 'include',
       });
 
-      if (!res.ok) {
-        const data = await res.json();
-        alert(`Error: ${data.message || 'Failed to remove role assignment'}`);
+      if (!ok) {
+        alert(`Error: ${error || 'Failed to remove role assignment'}`);
         return;
       }
 
-      setUserAssignments((prev) => prev.filter((a) => a.id !== assignmentId));
+      // Refresh assignments
+      const refreshRes = await apiFetch<{ assignments: AssignmentItem[] }>(`/users/${selectedUserForRoles.id}/roles`);
+      if (refreshRes.ok && refreshRes.data) {
+        setUserAssignments(refreshRes.data.assignments);
+      }
     } catch {
       alert('Network error while removing role assignment.');
     }

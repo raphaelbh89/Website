@@ -3,7 +3,11 @@ import {
   createDatabase,
   contentTypes,
   contentEntries,
+  v7,
 } from '@platform/database';
+import { isValidLocale, normalizeLocale } from './locale.js';
+
+export { isValidLocale, normalizeLocale } from './locale.js';
 
 export type SupportedFieldType = 'text' | 'textarea' | 'number' | 'boolean' | 'select';
 
@@ -48,7 +52,13 @@ export function validateCmsDataSchema(schema: unknown): { valid: boolean; error?
     return { valid: false, error: 'Data schema must be a valid object' };
   }
   const s = schema as Record<string, unknown>;
-  if (typeof s.version !== 'number' || s.version < 1) {
+  const allowedSchemaProps = new Set(['version', 'fields']);
+  for (const prop of Object.keys(s)) {
+    if (!allowedSchemaProps.has(prop)) {
+      return { valid: false, error: `Unsupported top-level schema property "${prop}"` };
+    }
+  }
+  if (typeof s.version !== 'number' || !Number.isInteger(s.version) || s.version < 1) {
     return { valid: false, error: 'Data schema version must be a positive integer' };
   }
   if (!Array.isArray(s.fields)) {
@@ -79,15 +89,145 @@ export function validateCmsDataSchema(schema: unknown): { valid: boolean; error?
       return { valid: false, error: `Unsupported field type "${String(f.type)}" for field "${f.key}". M3.1 supported types: ${allowedTypes.join(', ')}` };
     }
 
+    const allowedFieldProps = new Set([
+      'key',
+      'label',
+      'type',
+      'required',
+      'default',
+      'minLength',
+      'maxLength',
+      'min',
+      'max',
+      'integerOnly',
+      'options',
+    ]);
+    for (const prop of Object.keys(f)) {
+      if (!allowedFieldProps.has(prop)) {
+        return { valid: false, error: `Unsupported schema property "${prop}" in field "${f.key}"` };
+      }
+    }
+
+    if (f.minLength !== undefined && (typeof f.minLength !== 'number' || !Number.isInteger(f.minLength) || f.minLength < 0)) {
+      return { valid: false, error: `Field "${f.key}": minLength must be a non-negative integer` };
+    }
+    if (f.maxLength !== undefined && (typeof f.maxLength !== 'number' || !Number.isInteger(f.maxLength) || f.maxLength < 0)) {
+      return { valid: false, error: `Field "${f.key}": maxLength must be a non-negative integer` };
+    }
+    if (
+      f.minLength !== undefined &&
+      f.maxLength !== undefined &&
+      (f.minLength as number) > (f.maxLength as number)
+    ) {
+      return { valid: false, error: `Field "${f.key}": minLength cannot be greater than maxLength` };
+    }
+
+    if (f.min !== undefined && (typeof f.min !== 'number' || !Number.isFinite(f.min))) {
+      return { valid: false, error: `Field "${f.key}": min must be a valid number` };
+    }
+    if (f.max !== undefined && (typeof f.max !== 'number' || !Number.isFinite(f.max))) {
+      return { valid: false, error: `Field "${f.key}": max must be a valid number` };
+    }
+    if (
+      f.min !== undefined &&
+      f.max !== undefined &&
+      (f.min as number) > (f.max as number)
+    ) {
+      return { valid: false, error: `Field "${f.key}": min cannot be greater than max` };
+    }
+
     const fieldType = f.type as SupportedFieldType;
 
+    if (f.required !== undefined && typeof f.required !== 'boolean') {
+      return { valid: false, error: `Field "${f.key}": required must be a boolean` };
+    }
+    if (f.integerOnly !== undefined && typeof f.integerOnly !== 'boolean') {
+      return { valid: false, error: `Field "${f.key}": integerOnly must be a boolean` };
+    }
+
+    const textOnlyProps = ['minLength', 'maxLength'];
+    const numberOnlyProps = ['min', 'max', 'integerOnly'];
+    if (fieldType !== 'text' && fieldType !== 'textarea') {
+      const invalidTextProp = textOnlyProps.find((prop) => f[prop] !== undefined);
+      if (invalidTextProp) {
+        return { valid: false, error: `Field "${f.key}": property "${invalidTextProp}" is not supported for type "${fieldType}"` };
+      }
+    }
+    if (fieldType !== 'number') {
+      const invalidNumberProp = numberOnlyProps.find((prop) => f[prop] !== undefined);
+      if (invalidNumberProp) {
+        return { valid: false, error: `Field "${f.key}": property "${invalidNumberProp}" is not supported for type "${fieldType}"` };
+      }
+    }
+    if (fieldType !== 'select' && f.options !== undefined) {
+      return { valid: false, error: `Field "${f.key}": property "options" is not supported for type "${fieldType}"` };
+    }
+
+    let selectOptions: SelectOption[] | undefined = undefined;
     if (fieldType === 'select') {
       if (!Array.isArray(f.options) || f.options.length === 0) {
         return { valid: false, error: `Field "${f.key}" of type "select" must define a non-empty options array` };
       }
+      const optionValues = new Set<string>();
       for (const opt of f.options as Record<string, unknown>[]) {
-        if (!opt || typeof opt.value !== 'string' || typeof opt.label !== 'string') {
-          return { valid: false, error: `Options for field "${f.key}" must have label and value strings` };
+        if (!opt || typeof opt !== 'object') {
+          return { valid: false, error: `Options for field "${f.key}" must be objects` };
+        }
+        const unsupportedOptionProp = Object.keys(opt).find((prop) => prop !== 'label' && prop !== 'value');
+        if (unsupportedOptionProp) {
+          return { valid: false, error: `Unsupported option property "${unsupportedOptionProp}" in select field "${f.key}"` };
+        }
+        if (typeof opt.value !== 'string' || !opt.value.trim() || typeof opt.label !== 'string' || !opt.label.trim()) {
+          return { valid: false, error: `Options for field "${f.key}" must have non-empty label and value strings` };
+        }
+        if (optionValues.has(opt.value)) {
+          return { valid: false, error: `Duplicate option value "${opt.value}" in select field "${f.key}"` };
+        }
+        optionValues.add(opt.value);
+      }
+      selectOptions = (f.options as Array<{ value: string; label: string }>).map((o) => ({
+        value: String(o.value),
+        label: String(o.label).trim(),
+      }));
+    }
+
+    // Default value validation at definition time
+    if (f.default !== undefined) {
+      const def = f.default;
+      if (fieldType === 'text' || fieldType === 'textarea') {
+        if (typeof def !== 'string') {
+          return { valid: false, error: `Field "${f.key}": default must be a string` };
+        }
+        if (typeof f.minLength === 'number' && def.length < f.minLength) {
+          return { valid: false, error: `Field "${f.key}": default length must be >= minLength (${f.minLength})` };
+        }
+        if (typeof f.maxLength === 'number' && def.length > f.maxLength) {
+          return { valid: false, error: `Field "${f.key}": default length must be <= maxLength (${f.maxLength})` };
+        }
+      } else if (fieldType === 'number') {
+        if (typeof def !== 'number' || isNaN(def)) {
+          return { valid: false, error: `Field "${f.key}": default must be a number` };
+        }
+        if (f.integerOnly && !Number.isInteger(def)) {
+          return { valid: false, error: `Field "${f.key}": default must be an integer` };
+        }
+        if (typeof f.min === 'number' && def < f.min) {
+          return { valid: false, error: `Field "${f.key}": default must be >= min (${f.min})` };
+        }
+        if (typeof f.max === 'number' && def > f.max) {
+          return { valid: false, error: `Field "${f.key}": default must be <= max (${f.max})` };
+        }
+      } else if (fieldType === 'boolean') {
+        if (typeof def !== 'boolean') {
+          return { valid: false, error: `Field "${f.key}": default must be a boolean (true/false)` };
+        }
+      } else if (fieldType === 'select') {
+        if (typeof def !== 'string') {
+          return { valid: false, error: `Field "${f.key}": default must be a string` };
+        }
+        const allowedVals = selectOptions?.map((o) => o.value) || [];
+        if (!allowedVals.includes(def)) {
+          return { valid: false, error: `Field "${f.key}": default value "${def}" is not in allowed select options` };
         }
       }
     }
@@ -103,7 +243,7 @@ export function validateCmsDataSchema(schema: unknown): { valid: boolean; error?
       min: typeof f.min === 'number' ? f.min : undefined,
       max: typeof f.max === 'number' ? f.max : undefined,
       integerOnly: typeof f.integerOnly === 'boolean' ? f.integerOnly : undefined,
-      options: f.options as SelectOption[] | undefined,
+      options: selectOptions,
     });
   }
 
@@ -178,7 +318,7 @@ export function validateEntryDataAgainstSchema(
           return { valid: false, error: `Field "${field.key}" must be a string` };
         }
         const allowedValues = field.options?.map((o) => o.value) || [];
-        if (field.required && !allowedValues.includes(val)) {
+        if (!allowedValues.includes(val)) {
           return { valid: false, error: `Value "${val}" is not a valid option for select field "${field.key}"` };
         }
         result[field.key] = val;
@@ -189,19 +329,6 @@ export function validateEntryDataAgainstSchema(
   }
 
   return { valid: true, validatedData: result };
-}
-
-export function isValidLocale(locale: string): boolean {
-  // Normalized BCP-47 subset (e.g. en, vi, zh-CN, pt-BR, es-419)
-  return /^[a-z]{2,3}(-[A-Za-z0-9]{2,4})*$/.test(locale.trim());
-}
-
-export function normalizeLocale(locale: string): string {
-  const trimmed = locale.trim();
-  const parts = trimmed.split('-');
-  const primary = parts[0]?.toLowerCase() || trimmed.toLowerCase();
-  if (parts.length === 1 || !parts[1]) return primary;
-  return `${primary}-${parts[1].toUpperCase()}`;
 }
 
 export class ContentService {
@@ -298,12 +425,14 @@ export class ContentService {
         }
       }
 
+      const contentTypeId = v7();
       const insertRes = await client.query(
         `INSERT INTO content_types (
           id, key, name, description, kind, scope_kind, site_id, schema_version, data_schema, ui_schema, capabilities, created_at, updated_at
-        ) VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, 1, $7, $8, $9, NOW(), NOW())
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, NOW(), NOW())
         RETURNING *`,
         [
+          contentTypeId,
           key,
           data.name.trim(),
           data.description?.trim() || null,
@@ -517,9 +646,12 @@ export class ContentService {
       return { error: typeRes.error || 'Content type not found', status: typeRes.status || 404 };
     }
     const contentType = typeRes.contentType;
-    const targetLocale = data.locale ? data.locale : 'vi';
+    if (!data.locale || typeof data.locale !== 'string' || !data.locale.trim()) {
+      return { error: 'Locale is required for creating content entries', status: 400 };
+    }
+    const targetLocale = data.locale.trim();
     if (!isValidLocale(targetLocale)) {
-      return { error: `Invalid locale "${data.locale || ''}". Must be a valid BCP-47 tag (e.g. "vi", "en", "zh-CN")`, status: 400 };
+      return { error: `Invalid locale "${data.locale}". Must be a valid BCP-47 tag (e.g. "vi", "en", "zh-CN")`, status: 400 };
     }
     const locale = normalizeLocale(targetLocale);
 
@@ -575,22 +707,26 @@ export class ContentService {
       }
 
       // 1. Insert content_entries (with pointers NULL initially)
+      const entryId = v7();
+      const translationGroupId = v7();
       const entryRes = await client.query(
         `INSERT INTO content_entries (
           id, site_id, content_type_id, locale, translation_group_id, entry_kind, current_revision_id, published_revision_id, published_slug, lifecycle_state, created_by, created_at, updated_at
-        ) VALUES (gen_random_uuid(), $1, $2, $3, gen_random_uuid(), $4, NULL, NULL, NULL, 'active', $5, NOW(), NOW())
+        ) VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL, NULL, 'active', $7, NOW(), NOW())
         RETURNING *`,
-        [siteId, contentType.id, locale, contentType.kind, userId || null]
+        [entryId, siteId, contentType.id, locale, translationGroupId, contentType.kind, userId || null]
       );
       const newEntry = entryRes.rows[0];
 
       // 2. Insert content_entry_revisions (version_number = 1)
+      const revisionId = v7();
       const revRes = await client.query(
         `INSERT INTO content_entry_revisions (
           id, entry_id, version_number, schema_version, title, slug, data, created_by, created_at
-        ) VALUES (gen_random_uuid(), $1, 1, $2, $3, $4, $5, $6, NOW())
+        ) VALUES ($1, $2, 1, $3, $4, $5, $6, $7, NOW())
         RETURNING *`,
         [
+          revisionId,
           newEntry.id,
           contentType.schemaVersion,
           data.title.trim(),
@@ -641,7 +777,7 @@ export class ContentService {
     typeKey: string,
     entryId: string,
     data: {
-      expectedRevision?: number;
+      expectedRevision: number;
       title?: string;
       slug?: string;
       data?: Record<string, unknown>;
@@ -649,6 +785,13 @@ export class ContentService {
     },
     userId?: string
   ): Promise<{ entry?: Record<string, unknown>; revision?: Record<string, unknown>; error?: string; status?: number }> {
+    if (data.expectedRevision === undefined || data.expectedRevision === null || typeof data.expectedRevision !== 'number') {
+      return {
+        error: 'expectedRevision is required for updating content entries (optimistic concurrency control)',
+        status: 400,
+      };
+    }
+
     const typeRes = await this.resolveContentTypeByKey(typeKey, siteId);
     if (!typeRes.contentType) {
       return { error: typeRes.error || 'Content type not found', status: typeRes.status || 404 };
@@ -676,12 +819,12 @@ export class ContentService {
       );
       const currentRev = currentRevRes.rows[0];
 
-      // 2. Optimistic Concurrency Check
-      if (data.expectedRevision !== undefined && currentRev) {
+      // 2. Optimistic Concurrency Check (strictly required)
+      if (currentRev) {
         if (currentRev.version_number !== data.expectedRevision) {
           await client.query('ROLLBACK');
           return {
-            error: `Optimistic concurrency conflict. Current revision is ${currentRev.version_number}`,
+            error: `Optimistic concurrency conflict. Current revision is ${currentRev.version_number}, but expected ${data.expectedRevision}`,
             status: 409,
           };
         }
@@ -739,12 +882,14 @@ export class ContentService {
       }
 
       // 3. INSERT new immutable revision
+      const revisionId = v7();
       const newRevRes = await client.query(
         `INSERT INTO content_entry_revisions (
           id, entry_id, version_number, schema_version, title, slug, data, created_by, created_at
-        ) VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, NOW())
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
         RETURNING *`,
         [
+          revisionId,
           entry.id,
           nextVersionNumber,
           contentType.schemaVersion,
@@ -1087,6 +1232,36 @@ export class ContentService {
       status = entry.publishedRevisionId === entry.currentRevisionId ? 'published' : 'published_with_draft';
     }
 
+    let currentRevisionTerms: Record<string, unknown>[] = [];
+    if (entry.currentRevisionId) {
+      const termsRes = await this.database.pool.query(
+        `SELECT tt.id, tt.key, tt.name, tt.description, tt.sort_order, tt.is_active, tt.parent_id, tt.depth,
+                t.id as taxonomy_id, t.key as taxonomy_key, t.name as taxonomy_name
+         FROM content_revision_terms crt
+         JOIN taxonomy_terms tt ON tt.id = crt.taxonomy_term_id
+         JOIN taxonomies t ON t.id = tt.taxonomy_id
+         WHERE crt.revision_id = $1
+         ORDER BY crt.sort_order ASC`,
+        [entry.currentRevisionId]
+      );
+      currentRevisionTerms = termsRes.rows;
+    }
+
+    let publishedRevisionTerms: Record<string, unknown>[] = [];
+    if (entry.publishedRevisionId) {
+      const pubTermsRes = await this.database.pool.query(
+        `SELECT tt.id, tt.key, tt.name, tt.description, tt.sort_order, tt.is_active, tt.parent_id, tt.depth,
+                t.id as taxonomy_id, t.key as taxonomy_key, t.name as taxonomy_name
+         FROM content_revision_terms crt
+         JOIN taxonomy_terms tt ON tt.id = crt.taxonomy_term_id
+         JOIN taxonomies t ON t.id = tt.taxonomy_id
+         WHERE crt.revision_id = $1
+         ORDER BY crt.sort_order ASC`,
+        [entry.publishedRevisionId]
+      );
+      publishedRevisionTerms = pubTermsRes.rows;
+    }
+
     return {
       entry: {
         ...entry,
@@ -1094,8 +1269,18 @@ export class ContentService {
         createdAt: entry.createdAt.toISOString(),
         updatedAt: entry.updatedAt.toISOString(),
       } as unknown as Record<string, unknown>,
-      currentRevision: (currentRev || undefined) as unknown as Record<string, unknown> | undefined,
-      publishedRevision: (publishedRev || undefined) as unknown as Record<string, unknown> | undefined,
+      currentRevision: currentRev
+        ? ({
+            ...currentRev,
+            terms: currentRevisionTerms,
+          } as unknown as Record<string, unknown>)
+        : undefined,
+      publishedRevision: publishedRev
+        ? ({
+            ...publishedRev,
+            terms: publishedRevisionTerms,
+          } as unknown as Record<string, unknown>)
+        : undefined,
     };
   }
 
@@ -1107,14 +1292,20 @@ export class ContentService {
     siteId: string,
     typeKey: string,
     slug: string,
-    locale: string = 'vi'
+    locale: string
   ): Promise<{ entry?: Record<string, unknown>; error?: string; status?: number }> {
+    if (!locale || typeof locale !== 'string' || !locale.trim()) {
+      return { error: 'Query parameter "locale" is required', status: 400 };
+    }
     const typeRes = await this.resolveContentTypeByKey(typeKey, siteId);
     if (!typeRes.contentType) return { error: 'Content type not found', status: 404 };
     const contentType = typeRes.contentType;
 
     const normalizedSlug = slug.trim().toLowerCase();
-    const normalizedLocale = locale.trim().toLowerCase();
+    if (!isValidLocale(locale)) {
+      return { error: `Invalid locale "${locale}". Must be a valid BCP-47 tag`, status: 400 };
+    }
+    const normalizedLocale = normalizeLocale(locale);
 
     // Query entry where lifecycle_state = 'active', published_revision_id IS NOT NULL, published_slug = slug
     const entry = await this.database.db.query.contentEntries.findFirst({

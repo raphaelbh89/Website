@@ -21,6 +21,7 @@ interface AuthMeResponse {
 }
 
 import Link from 'next/link';
+import { apiFetch } from '@/lib/api';
 
 export default function ProtectedAdminDashboard() {
   const router = useRouter();
@@ -29,43 +30,22 @@ export default function ProtectedAdminDashboard() {
   const [loggingOut, setLoggingOut] = useState(false);
 
   useEffect(() => {
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:4000';
-
-    fetch(`${apiBase}/auth/me`, {
-      method: 'GET',
-      credentials: 'include',
-    })
-      .then((res) => {
-        if (!res.ok) {
-          router.push('/login');
-          return null;
-        }
-        return res.json() as Promise<AuthMeResponse>;
-      })
-      .then((data) => {
-        if (data) {
-          setAuthData(data);
-          setLoading(false);
-        }
-      })
-      .catch(() => {
+    async function checkAuth() {
+      const { data, ok } = await apiFetch<AuthMeResponse>('/auth/me');
+      if (!ok || !data) {
         router.push('/login');
-      });
+        return;
+      }
+      setAuthData(data);
+      setLoading(false);
+    }
+    checkAuth();
   }, [router]);
 
   async function handleLogout() {
     setLoggingOut(true);
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:4000';
-
     try {
-      await fetch(`${apiBase}/auth/logout`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest',
-        },
-        credentials: 'include',
-      });
+      await apiFetch('/auth/logout', { method: 'POST' });
     } finally {
       router.push('/login');
       router.refresh();

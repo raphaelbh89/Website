@@ -11,7 +11,7 @@
 | M0 | Architecture & Agent Governance | VERIFIED | Architect | Markdown package |
 | M1 | Monorepo Foundation | VERIFIED | Orchestrator / Backend / QA | TEST_REPORT.md TR-20260907-M1-RERUN; independent verification passed; baseline commit 9294b50 pushed |
 | M2 | Auth + RBAC | READY_FOR_TEST | Backend / Architect | M2.1 VERIFIED; M2.2 READY_FOR_TEST (API/DB Verified); M2.3 Scoped Guards VERIFIED (TR-20260907-M2-3); M2.4 Admin User/Role Management VERIFIED (TR-20260907-M2-4). Overall M2 pending browser runtime verification. |
-| M3 | CMS Core | IN_PROGRESS | Backend/Admin | M3.1 Core Slice READY_FOR_TEST (DB/API VERIFIED); M3.2 Taxonomy Engine READY_FOR_TEST (DB/API VERIFIED; TR-20260907-M3-2; Hybrid global/site scoping, terms site-bound, no-shadowing race test, hierarchy subtree move, maxDepth=5, cycle prevention, activation invariants, ContentType bindings, Revision-Term snapshots, copy-forward, zero draft leakage, public term filter proof, clean migration 0004_condemned_invisible_woman.sql). |
+| M3 | CMS Core | DONE | Backend/Admin/QA | Audit remediation and closure verified by full regression, two clean PostgreSQL 16 paths, complete browser runtime, and independent QA; see TR-20260908-M3-AUDIT. |
 | M4 | Media + Menu + Forms + Settings | TODO | Backend/Admin | - |
 | M5 | Page Builder + Module Registry | TODO | Admin/Frontend | - |
 | M6 | Theme Engine + Responsive Config | TODO | Frontend/Design | - |
@@ -26,12 +26,12 @@
 |---|---|---|---|---|
 | Repository bootstrap | VERIFIED | Orchestrator | QA | Frozen/fresh install, typecheck/build pass; independent verification confirmed |
 | PostgreSQL migrations | VERIFIED | Backend | QA | PostgreSQL 16 clean/repeat migration + persistence pass; verified with portable PostgreSQL 16 |
-| User authentication | VERIFIED | Backend | Security/QA | M2.1 schema & M2.2 Fastify login/logout/me/session/cookies/UI (API/DB VERIFIED; Browser READY_FOR_TEST) |
+| User authentication | VERIFIED | Backend | Security/QA | HttpOnly cookie login/session/logout, no raw token response, provenance-based CSRF protection; browser runtime verified. |
 | Role management | VERIFIED | Backend/Admin | Security/QA | M2.1 schema & seed; M2.4 Role CRUD, Permission assignment matrix, System Role protection VERIFIED (TR-20260907-M2-4) |
 | Permission management | VERIFIED | Backend/Admin | Security/QA | M2.1 engine & M2.3 Fastify Scoped Authorization Guards & M2.4 Role Assignment Invariants VERIFIED (TR-20260907-M2-4) |
-| Content Type builder | VERIFIED | Backend/Admin | QA | M3.1 schema-driven CMS Field Schema (text, textarea, number, boolean, select), bi-directional no-shadowing, UI schema viewer, create modal (TR-20260907-M3-1) |
-| Content Entry CRUD | VERIFIED | Backend/Admin | QA | M3.1 Revision-pointer model, immutable revisions, non-destructive draft editing, optimistic concurrency, dynamic form renderer, public content resolver (TR-20260907-M3-1) |
-| Category/Taxonomy | VERIFIED | Backend/Admin | QA | M3.2 Hybrid taxonomy definitions, site-bound terms, subtree move, maxDepth=5, cycle prevention, revision-term snapshots, copy-forward, public term filtering proof (DB/API VERIFIED; Browser READY_FOR_TEST; TR-20260907-M3-2) |
+| Content Type builder | VERIFIED | Backend/Admin | QA | Strict five-type schema/default validation, no-shadowing, configurable Admin API client, browser binding flow; TR-20260908-M3-AUDIT. |
+| Content Entry CRUD | VERIFIED | Backend/Admin | QA | Mandatory `expectedRevision`, composite pointer FKs, UUIDv7, locale canonicalization, optional-field semantics, browser create/edit/publish; TR-20260908-M3-AUDIT. |
+| Category/Taxonomy | VERIFIED | Backend/Admin | QA | Hybrid scope, hierarchy and revision snapshots preserved; API/DB/browser and independent QA verified; TR-20260908-M3-AUDIT. |
 | Media Library | TODO | Backend/Admin | Security/QA | upload validation |
 | Menu Builder | TODO | Backend/Admin | QA | nested/mega ready |
 | Form Builder | TODO | Backend/Admin | Security/QA | submissions/export |

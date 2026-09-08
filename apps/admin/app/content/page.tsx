@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { apiFetch } from '@/lib/api';
 
 interface CmsField {
   key: string;
@@ -48,6 +49,24 @@ interface Site {
   name: string;
 }
 
+interface TaxonomyBindingResponse {
+  taxonomy_id: string;
+  taxonomy_key: string;
+  taxonomy_name: string;
+  is_required: boolean;
+  min_terms: number;
+  max_terms: number | null;
+  is_hierarchical?: boolean;
+}
+
+interface ContentEntryDetailResponse {
+  currentRevision?: {
+    versionNumber: number;
+    data: Record<string, unknown>;
+    terms?: Record<string, unknown>[];
+  };
+}
+
 export default function ContentEntriesPage() {
   const [sites, setSites] = useState<Site[]>([]);
   const [selectedSiteId, setSelectedSiteId] = useState<string>('');
@@ -64,45 +83,98 @@ export default function ContentEntriesPage() {
   const [expectedRevision, setExpectedRevision] = useState<number | undefined>(undefined);
   const [formTitle, setFormTitle] = useState('');
   const [formSlug, setFormSlug] = useState('');
+  const [formLocale, setFormLocale] = useState('');
   const [formData, setFormData] = useState<Record<string, unknown>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Taxonomy State
+  const [taxonomyBindings, setTaxonomyBindings] = useState<{
+    taxonomy_id: string;
+    taxonomy_key: string;
+    taxonomy_name: string;
+    is_required: boolean;
+    min_terms: number;
+    max_terms: number | null;
+    is_hierarchical?: boolean;
+  }[]>([]);
+  const [availableTerms, setAvailableTerms] = useState<Record<string, { id: string; key: string; name: string; depth: number; is_active: boolean }[]>>({});
+  const [taxonomyAssignments, setTaxonomyAssignments] = useState<Record<string, string[]>>({});
+
   // Fetch initial sites
   useEffect(() => {
-    fetch('http://localhost:4000/sites', {
-      headers: { 'X-Requested-With': 'XMLHttpRequest' },
-      credentials: 'include',
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.sites?.length > 0) {
-          setSites(data.sites);
-          setSelectedSiteId(data.sites[0].id);
-        }
-      })
-      .catch(() => {});
+    async function loadSites() {
+      const { data, ok } = await apiFetch<{ sites?: Site[] }>('/sites');
+      if (ok && data && data.sites && data.sites.length > 0 && data.sites[0]) {
+        setSites(data.sites);
+        setSelectedSiteId(data.sites[0].id);
+      }
+    }
+    loadSites();
   }, []);
 
   // Fetch content types when site selected
   useEffect(() => {
     if (!selectedSiteId) return;
-    fetch(`http://localhost:4000/content-types?siteId=${selectedSiteId}`, {
-      headers: { 'X-Requested-With': 'XMLHttpRequest' },
-      credentials: 'include',
-    })
-      .then((res) => res.json())
-      .then((data) => {
+    async function loadTypes() {
+      const { data, ok } = await apiFetch<{ contentTypes?: ContentType[] }>(`/content-types?siteId=${selectedSiteId}`);
+      if (ok && data) {
         const types = data.contentTypes || [];
         setContentTypes(types);
-        if (types.length > 0) {
+        if (types.length > 0 && types[0]) {
           setSelectedTypeKey(types[0].key);
         } else {
           setSelectedTypeKey('');
         }
-      })
-      .catch(() => {});
+      }
+    }
+    loadTypes();
   }, [selectedSiteId]);
+
+  // Load taxonomy bindings and terms whenever activeContentType or site changes
+  useEffect(() => {
+    const currentType = contentTypes.find((t) => t.key === selectedTypeKey);
+    if (!currentType || !selectedSiteId) {
+      setTaxonomyBindings([]);
+      setAvailableTerms({});
+      return;
+    }
+
+    async function loadTaxonomies() {
+      try {
+        const { data: bindData, ok: bindOk } = await apiFetch<{ bindings?: TaxonomyBindingResponse[] }>(`/content-types/${currentType?.id}/taxonomies`);
+        if (bindOk && bindData) {
+          const list = (bindData.bindings || []).map((b) => ({
+            taxonomy_id: String(b.taxonomy_id),
+            taxonomy_key: String(b.taxonomy_key),
+            taxonomy_name: String(b.taxonomy_name),
+            is_required: Boolean(b.is_required),
+            min_terms: Number(b.min_terms || 0),
+            max_terms: b.max_terms !== null && b.max_terms !== undefined ? Number(b.max_terms) : null,
+            is_hierarchical: b.is_hierarchical,
+          }));
+          setTaxonomyBindings(list);
+
+          // Fetch terms for each bound taxonomy
+          const termsMap: Record<string, { id: string; key: string; name: string; depth: number; is_active: boolean }[]> = {};
+          await Promise.all(
+            list.map(async (b: Record<string, unknown>) => {
+              const taxKey = b.taxonomy_key as string;
+              const { data: tData, ok: tOk } = await apiFetch<{ terms?: { id: string; key: string; name: string; depth: number; is_active: boolean }[] }>(`/sites/${selectedSiteId}/taxonomies/${taxKey}/terms`);
+              if (tOk && tData) {
+                termsMap[taxKey] = (tData.terms || []).filter((term: { is_active: boolean }) => term.is_active);
+              }
+            })
+          );
+          setAvailableTerms(termsMap);
+        }
+      } catch {
+        // Ignore
+      }
+    }
+
+    loadTaxonomies();
+  }, [selectedTypeKey, selectedSiteId, contentTypes]);
 
   // Fetch entries when type or site changes
   const fetchEntries = async () => {
@@ -113,18 +185,14 @@ export default function ContentEntriesPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`http://localhost:4000/sites/${selectedSiteId}/content/${selectedTypeKey}`, {
-        headers: { 'X-Requested-With': 'XMLHttpRequest' },
-        credentials: 'include',
-      });
-      if (!res.ok) {
-        if (res.status === 401) {
+      const { data, ok, status } = await apiFetch<{ items?: ContentEntryItem[] }>(`/sites/${selectedSiteId}/content/${selectedTypeKey}`);
+      if (!ok || !data) {
+        if (status === 401) {
           window.location.href = '/login';
           return;
         }
-        throw new Error(`Failed to load content entries (${res.status})`);
+        throw new Error(`Failed to load content entries (${status})`);
       }
-      const data = await res.json();
       setEntries(data.items || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error loading entries');
@@ -144,11 +212,17 @@ export default function ContentEntriesPage() {
     setExpectedRevision(undefined);
     setFormTitle('');
     setFormSlug('');
+    setFormLocale('');
     const initialData: Record<string, unknown> = {};
     activeContentType?.dataSchema.fields.forEach((f) => {
-      initialData[f.key] = f.default !== undefined ? f.default : f.type === 'boolean' ? false : f.type === 'number' ? 0 : '';
+      if (f.default !== undefined) {
+        initialData[f.key] = f.default;
+      } else if (f.required && f.type === 'boolean') {
+        initialData[f.key] = false;
+      }
     });
     setFormData(initialData);
+    setTaxonomyAssignments({});
     setFormError(null);
     setShowFormModal(true);
   };
@@ -158,23 +232,33 @@ export default function ContentEntriesPage() {
     setExpectedRevision(entry.currentVersionNumber);
     setFormTitle(entry.title);
     setFormSlug(entry.slug || '');
+    setFormLocale(entry.locale);
+    setFormData({});
+    setTaxonomyAssignments({});
     setFormError(null);
 
     // Fetch full entry details
     try {
-      const res = await fetch(`http://localhost:4000/sites/${selectedSiteId}/content/${selectedTypeKey}/${entry.id}`, {
-        headers: { 'X-Requested-With': 'XMLHttpRequest' },
-        credentials: 'include',
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setFormData(data.currentRevision?.data || {});
+      const { data, ok } = await apiFetch<ContentEntryDetailResponse>(`/sites/${selectedSiteId}/content/${selectedTypeKey}/${entry.id}`);
+      if (!ok || !data?.currentRevision || data.currentRevision.versionNumber === undefined) {
+        throw new Error('Could not load the current revision. Reopen the editor and try again.');
       }
-    } catch {
-      // Use fallback
+      setFormData(data.currentRevision.data || {});
+      // Update loaded revision number to guarantee optimistic concurrency token
+      setExpectedRevision(data.currentRevision.versionNumber);
+      // Load assigned terms of current revision
+      const initialAssignments: Record<string, string[]> = {};
+      const termsList = data.currentRevision.terms || [];
+      termsList.forEach((t: Record<string, unknown>) => {
+        const taxKey = t.taxonomy_key as string;
+        if (!initialAssignments[taxKey]) initialAssignments[taxKey] = [];
+        initialAssignments[taxKey].push(t.id as string);
+      });
+      setTaxonomyAssignments(initialAssignments);
+      setShowFormModal(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load content entry');
     }
-
-    setShowFormModal(true);
   };
 
   const handleSaveEntry = async (e: React.FormEvent) => {
@@ -183,33 +267,39 @@ export default function ContentEntriesPage() {
     setSubmitting(true);
 
     try {
-      const url = editingEntryId
-        ? `http://localhost:4000/sites/${selectedSiteId}/content/${selectedTypeKey}/${editingEntryId}`
-        : `http://localhost:4000/sites/${selectedSiteId}/content/${selectedTypeKey}`;
+      const path = editingEntryId
+        ? `/sites/${selectedSiteId}/content/${selectedTypeKey}/${editingEntryId}`
+        : `/sites/${selectedSiteId}/content/${selectedTypeKey}`;
       const method = editingEntryId ? 'PATCH' : 'POST';
 
+      const cleanedData = Object.fromEntries(
+        Object.entries(formData).filter(([key, value]) => {
+          const field = activeContentType?.dataSchema.fields.find((candidate) => candidate.key === key);
+          return field?.required || (value !== '' && value !== undefined);
+        }),
+      );
       const payload: Record<string, unknown> = {
         title: formTitle,
         slug: formSlug || undefined,
-        data: formData,
+        data: cleanedData,
+        taxonomyAssignments,
       };
-      if (editingEntryId && expectedRevision !== undefined) {
+      if (editingEntryId) {
+        if (expectedRevision === undefined) {
+          throw new Error('Cannot update without the loaded revision. Close and reopen the editor.');
+        }
         payload.expectedRevision = expectedRevision;
+      } else {
+        payload.locale = formLocale;
       }
 
-      const res = await fetch(url, {
+      const { ok, error } = await apiFetch(path, {
         method,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest',
-        },
-        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
-      const resData = await res.json();
-      if (!res.ok) {
-        throw new Error(resData.message || 'Failed to save content entry');
+      if (!ok) {
+        throw new Error(error || 'Failed to save content entry');
       }
 
       setShowFormModal(false);
@@ -224,14 +314,11 @@ export default function ContentEntriesPage() {
   const handlePublish = async (entryId: string) => {
     if (!confirm('Are you sure you want to publish this revision to the public website?')) return;
     try {
-      const res = await fetch(`http://localhost:4000/sites/${selectedSiteId}/content/${selectedTypeKey}/${entryId}/publish`, {
+      const { ok, error } = await apiFetch(`/sites/${selectedSiteId}/content/${selectedTypeKey}/${entryId}/publish`, {
         method: 'POST',
-        headers: { 'X-Requested-With': 'XMLHttpRequest' },
-        credentials: 'include',
       });
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.message || 'Failed to publish entry');
+      if (!ok) {
+        alert(error || 'Failed to publish entry');
       } else {
         fetchEntries();
       }
@@ -243,12 +330,10 @@ export default function ContentEntriesPage() {
   const handleArchive = async (entryId: string) => {
     if (!confirm('Are you sure you want to archive this entry?')) return;
     try {
-      const res = await fetch(`http://localhost:4000/sites/${selectedSiteId}/content/${selectedTypeKey}/${entryId}/archive`, {
+      const { ok } = await apiFetch(`/sites/${selectedSiteId}/content/${selectedTypeKey}/${entryId}/archive`, {
         method: 'POST',
-        headers: { 'X-Requested-With': 'XMLHttpRequest' },
-        credentials: 'include',
       });
-      if (res.ok) {
+      if (ok) {
         fetchEntries();
       }
     } catch {
@@ -434,6 +519,21 @@ export default function ContentEntriesPage() {
             )}
 
             <form onSubmit={handleSaveEntry}>
+              {!editingEntryId && (
+                <div style={{ marginBottom: '1rem' }}>
+                  <label htmlFor="content-locale" style={{ display: 'block', fontSize: '0.875rem', color: '#94a3b8', marginBottom: '0.25rem' }}>Locale (required)</label>
+                  <input
+                    id="content-locale"
+                    type="text"
+                    required
+                    value={formLocale}
+                    onChange={(e) => setFormLocale(e.target.value)}
+                    placeholder="vi, en, zh-CN"
+                    pattern="[a-z]{2,3}(-[A-Za-z0-9]{2,4})*"
+                    style={{ width: '100%', padding: '0.5rem', background: '#0f172a', border: '1px solid #334155', color: 'white', borderRadius: '4px' }}
+                  />
+                </div>
+              )}
               <div style={{ marginBottom: '1rem' }}>
                 <label style={{ display: 'block', fontSize: '0.875rem', color: '#94a3b8', marginBottom: '0.25rem' }}>Title (required)</label>
                 <input
@@ -494,8 +594,16 @@ export default function ContentEntriesPage() {
                       <input
                         type="number"
                         required={field.required}
-                        value={(formData[field.key] as number | undefined) ?? 0}
-                        onChange={(e) => setFormData({ ...formData, [field.key]: Number(e.target.value) })}
+                        value={(formData[field.key] as number | undefined) ?? ''}
+                        onChange={(e) => {
+                          const nextData = { ...formData };
+                          if (e.target.value === '') {
+                            delete nextData[field.key];
+                          } else {
+                            nextData[field.key] = Number(e.target.value);
+                          }
+                          setFormData(nextData);
+                        }}
                         style={{ width: '100%', padding: '0.5rem', background: '#0f172a', border: '1px solid #334155', color: 'white', borderRadius: '4px' }}
                       />
                     )}
@@ -529,6 +637,91 @@ export default function ContentEntriesPage() {
                   </div>
                 ))}
               </div>
+
+              {/* Taxonomy Classifications Section */}
+              {taxonomyBindings.length > 0 && (
+                <div style={{ marginTop: '1.5rem', borderTop: '1px solid #334155', paddingTop: '1rem' }}>
+                  <h3 style={{ margin: '0 0 1rem', fontSize: '1rem', color: '#cbd5e1' }}>Taxonomy Classifications</h3>
+                  {taxonomyBindings.map((binding) => {
+                    const taxKey = binding.taxonomy_key;
+                    const terms = availableTerms[taxKey] || [];
+                    const selectedTermIds = taxonomyAssignments[taxKey] || [];
+
+                    return (
+                      <div key={taxKey} style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '6px', padding: '0.85rem', marginBottom: '1rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                          <span style={{ fontWeight: 600, color: '#f8fafc', fontSize: '0.9rem' }}>
+                            {binding.taxonomy_name} <span style={{ color: '#94a3b8', fontSize: '0.8rem', fontFamily: 'monospace' }}>({taxKey})</span>
+                          </span>
+                          <div style={{ display: 'flex', gap: '0.4rem', fontSize: '0.75rem' }}>
+                            {binding.is_required && (
+                              <span style={{ padding: '0.15rem 0.4rem', background: '#dc262622', border: '1px solid #dc2626', color: '#fca5a5', borderRadius: '3px' }}>
+                                Required
+                              </span>
+                            )}
+                            {binding.min_terms > 0 && (
+                              <span style={{ padding: '0.15rem 0.4rem', background: '#334155', color: '#cbd5e1', borderRadius: '3px' }}>
+                                Min: {binding.min_terms}
+                              </span>
+                            )}
+                            {binding.max_terms !== null && (
+                              <span style={{ padding: '0.15rem 0.4rem', background: '#334155', color: '#cbd5e1', borderRadius: '3px' }}>
+                                Max: {binding.max_terms}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {terms.length === 0 ? (
+                          <div style={{ color: '#64748b', fontSize: '0.8rem', fontStyle: 'italic' }}>No active terms available for this site.</div>
+                        ) : (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.5rem', maxHeight: '180px', overflowY: 'auto' }}>
+                            {terms.map((term) => {
+                              const isChecked = selectedTermIds.includes(term.id);
+                              return (
+                                <label
+                                  key={term.id}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.4rem',
+                                    padding: '0.35rem 0.5rem',
+                                    background: isChecked ? '#1e3a8a44' : '#1e293b',
+                                    border: `1px solid ${isChecked ? '#3b82f6' : '#334155'}`,
+                                    borderRadius: '4px',
+                                    cursor: 'pointer',
+                                    fontSize: '0.85rem',
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={(e) => {
+                                      let updated: string[];
+                                      if (e.target.checked) {
+                                        updated = [...selectedTermIds, term.id];
+                                      } else {
+                                        updated = selectedTermIds.filter((id) => id !== term.id);
+                                      }
+                                      setTaxonomyAssignments({
+                                        ...taxonomyAssignments,
+                                        [taxKey]: updated,
+                                      });
+                                    }}
+                                  />
+                                  <span style={{ paddingLeft: `${(term.depth || 0) * 12}px` }}>
+                                    {term.depth > 0 ? '↳ ' : ''}{term.name}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.5rem' }}>
                 <button

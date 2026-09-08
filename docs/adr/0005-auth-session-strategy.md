@@ -39,7 +39,7 @@ Cần một chiến lược Authentication & Session quản lý định danh ng�
 - **Security**: Token thô không bao giờ nằm trong DB (phòng ngừa leak database dump), JavaScript trong trình duyệt không thể đọc cookie (miễn nhiễm XSS đánh cắp token qua `document.cookie`).
 - **Revocation**: Tức thời (Instant revocation). Xóa hoặc đánh dấu `revoked_at` dòng session trong database là vô hiệu hóa ngay mọi request tiếp theo.
 - **Complexity**: Thấp đến trung bình. Không cần Redis ở giai đoạn đầu; Drizzle ORM query trực tiếp bảng `sessions` với primary index.
-- **CSRF**: Cần cơ chế bảo vệ vì cookie tự động đính kèm trên cross-site requests. Tuy nhiên với `SameSite=Lax` (hoặc `Strict` cho admin) kết hợp custom header `X-Requested-With` / preflight CORS và CSRF token double-submit trên các mutating requests (POST/PUT/DELETE/PATCH), rủi ro CSRF được triệt tiêu.
+- **CSRF**: Cookie tự động đính kèm trên request nên mọi mutation (`POST`/`PUT`/`DELETE`/`PATCH`) dùng cookie phải có `Origin`/`Referer` nằm trong allow-list. `SameSite=Lax`, explicit CORS, JSON hoặc `X-Requested-With` là các lớp phòng vệ bổ sung; transport Bearer-only không dùng cookie được xử lý riêng.
 
 ### Alternative B: Signed / Encrypted Stateless Session (Iron-session / Signed Cookie)
 - **Cơ chế**: Dữ liệu session được serialize, mã hóa và ký bằng secret key rồi lưu hoàn toàn trong cookie.
@@ -99,13 +99,16 @@ Chi tiết các quyết định thành phần:
      - Sử dụng `@fastify/rate-limit` trên endpoint `POST /auth/login`.
      - Giới hạn: Tối đa 5 lần thử thất bại trong vòng 1 phút trên mỗi cặp `IP + email`. Khi vượt ngưỡng, trả về HTTP 429 `"Too many requests, please try again later"`.
 
-6. **CSRF Protection Strategy**:
-   - Fastify API kiểm tra header `Origin` hoặc `Referer` trên các mutating HTTP methods (`POST`, `PUT`, `PATCH`, `DELETE`). Chỉ cho phép các request đến từ trusted origins đã cấu hình trong `CORS_ORIGIN` (ví dụ `http://localhost:3001` ở local dev).
-   - Yêu cầu header `X-Requested-With: XMLHttpRequest` hoặc `Content-Type: application/json` (trình duyệt không tự động gửi JSON kèm cookie trong standard HTML form submission mà không có CORS preflight).
-   - Hỗ trợ thêm token `Authorization: Bearer <session_token>` nếu client (như mobile app/CLI) chọn không dùng cookie.
+6. **CSRF & Transport Security Protection Strategy**:
+   - **Transport-Aware Protection**:
+     - Khi request sử dụng xác thực qua Cookie (Cookie-authenticated mutating requests: `POST`, `PUT`, `PATCH`, `DELETE`), Fastify API bắt buộc phải có header `Origin` hoặc `Referer` thuộc danh sách trusted origins được cấu hình trong `CORS_ORIGIN` (ví dụ `http://localhost:3000,http://localhost:3001`). Mọi request có Cookie nhưng thiếu `Origin`/`Referer` hoặc mang foreign origin/referer đều bị từ chối với HTTP 403 Forbidden.
+     - Yêu cầu cấu trúc header: Đối với mutating endpoints có payload, bắt buộc `Content-Type: application/json` hoặc `X-Requested-With: XMLHttpRequest` để ngăn chặn HTML form submission CSRF.
+     - Phân định Bearer API client: Đối với client máy khách thuần túy không dùng cookie trình duyệt (`Authorization: Bearer <token>`), request không bắt buộc phải có browser `Origin` header nhưng vẫn phải tuân thủ token verification và MIME constraints.
+   - **Zero Raw Token Exposure**:
+     - Luồng Browser login (`POST /auth/login`) chỉ set token vào `HttpOnly; Secure; SameSite=Lax` cookie và trả về body `{ "user": { ... } }`. Tuyệt đối không trả về `token` trong JSON payload nhằm triệt tiêu nguy cơ XSS trích xuất token từ bộ nhớ JavaScript.
 
 7. **Next.js Admin Integration**:
-   - `apps/admin` giao tiếp với `apps/api` thông qua fetch requests có `credentials: 'include'`.
+   - `apps/admin` giao tiếp với `apps/api` thông qua client chuẩn hóa `apiFetch` với `credentials: 'include'` và `X-Requested-With: XMLHttpRequest`.
    - Fastify API cấu hình `@fastify/cors` với `credentials: true` và explicit `origin` (không dùng wildcard `*`).
 
 ## Security Implications

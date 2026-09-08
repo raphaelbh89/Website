@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { apiFetch } from '@/lib/api';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -15,38 +16,26 @@ export default function LoginPage() {
     setLoading(true);
     setErrorMessage(null);
 
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:4000';
+    const { ok, status, error } = await apiFetch('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
 
-    try {
-      const res = await fetch(`${apiBase}/auth/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest',
-        },
-        credentials: 'include', // sends and stores HttpOnly cookie
-        body: JSON.stringify({ email, password }),
-      });
-
-      if (!res.ok) {
-        if (res.status === 401) {
-          setErrorMessage('Invalid email or password.');
-        } else if (res.status === 429) {
-          setErrorMessage('Too many login attempts. Please wait 1 minute.');
-        } else {
-          setErrorMessage('Server error. Please try again later.');
-        }
-        setLoading(false);
-        return;
+    if (!ok) {
+      if (status === 401) {
+        setErrorMessage('Invalid email or password.');
+      } else if (status === 429) {
+        setErrorMessage('Too many login attempts. Please wait 1 minute.');
+      } else {
+        setErrorMessage(error || 'Server error. Please try again later.');
       }
-
-      // Login success -> redirect to protected admin dashboard
-      router.push('/');
-      router.refresh();
-    } catch {
-      setErrorMessage('Network error: Unable to connect to API server.');
       setLoading(false);
+      return;
     }
+
+    // Login success -> redirect to protected admin dashboard
+    router.push('/');
+    router.refresh();
   }
 
   return (

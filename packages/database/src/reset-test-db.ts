@@ -3,7 +3,8 @@ import pg from 'pg';
 const dbName = process.argv[2] || 'm31_clean_verify_db';
 
 async function main() {
-  const client = new pg.Client({ connectionString: 'postgresql://platform@127.0.0.1:55432/postgres' });
+  const connStr = process.env.DATABASE_URL || 'postgresql://platform:local-development-only@127.0.0.1:5432/postgres';
+  const client = new pg.Client({ connectionString: connStr });
   await client.connect();
   await client.query(`DROP DATABASE IF EXISTS ${dbName}`);
   await client.query(`CREATE DATABASE ${dbName}`);

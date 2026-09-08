@@ -294,7 +294,7 @@ it('verifies M2.2 Fastify Auth API endpoints (login, cookies, me, logout, rate l
     const loginBody = validLogin.json();
     expect(loginBody.user.email).toBe('m2_auth_test@example.com');
     expect(loginBody.user.name).toBe('Auth Test User');
-    expect(loginBody.token).toBeDefined();
+    expect(loginBody.token).toBeUndefined(); // Security: raw token is NOT in JSON body
     expect(loginBody.user.passwordHash).toBeUndefined();
 
     // Verify cookie
@@ -305,7 +305,8 @@ it('verifies M2.2 Fastify Auth API endpoints (login, cookies, me, logout, rate l
     expect(setCookieHeader).toContain('Path=/');
 
     // 7. Verify session in PostgreSQL: DB has token_hash, NOT plain token
-    const rawToken = loginBody.token;
+    const rawToken = setCookieHeader.match(new RegExp(`${cookieName}=([^;]+)`))?.[1] ?? '';
+    expect(rawToken.length).toBeGreaterThan(0);
     const tokenHash = hashSessionToken(rawToken);
     const sessionInDb = await database.db.query.sessions.findFirst({
       where: (s, { eq: eqOp }) => eqOp(s.tokenHash, tokenHash),
@@ -346,6 +347,9 @@ it('verifies M2.2 Fastify Auth API endpoints (login, cookies, me, logout, rate l
     const logoutRes = await app.inject({
       method: 'POST',
       url: '/auth/logout',
+      headers: {
+        origin: 'http://localhost:3001',
+      },
       cookies: {
         [cookieName]: rawToken,
       },
@@ -374,14 +378,14 @@ it('verifies M2.2 Fastify Auth API endpoints (login, cookies, me, logout, rate l
       await app.inject({
         method: 'POST',
         url: '/auth/login',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
         payload: { email: 'rate_limit@example.com', password: 'wrong' },
       });
     }
     const rateLimitedRes = await app.inject({
       method: 'POST',
       url: '/auth/login',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       payload: { email: 'rate_limit@example.com', password: 'wrong' },
     });
     expect(rateLimitedRes.statusCode).toBe(429);
@@ -508,7 +512,8 @@ it('verifies production cookie attributes, session lifecycle (absolute expiry, i
     // __Host- cookies MUST NOT specify a Domain attribute
     expect(setCookie.toLowerCase()).not.toContain('domain=');
 
-    const globalAdminToken = prodLoginRes.json().token;
+    const globalAdminToken = (prodLoginRes.headers['set-cookie'] as string)?.match(new RegExp(`${prodCookieName}=([^;]+)`))?.[1] ?? '';
+    expect(globalAdminToken.length).toBeGreaterThan(0);
 
     // Login siteEditor
     const siteEditorLoginRes = await prodApp.inject({
@@ -519,7 +524,8 @@ it('verifies production cookie attributes, session lifecycle (absolute expiry, i
       },
       payload: { email: 'site_editor@example.com', password },
     });
-    const siteEditorToken = siteEditorLoginRes.json().token;
+    const siteEditorToken = (siteEditorLoginRes.headers['set-cookie'] as string)?.match(new RegExp(`${prodCookieName}=([^;]+)`))?.[1] ?? '';
+    expect(siteEditorToken.length).toBeGreaterThan(0);
 
     // Login regularUser
     const regularUserLoginRes = await prodApp.inject({
@@ -530,7 +536,8 @@ it('verifies production cookie attributes, session lifecycle (absolute expiry, i
       },
       payload: { email: 'regular_user@example.com', password },
     });
-    const regularUserToken = regularUserLoginRes.json().token;
+    const regularUserToken = (regularUserLoginRes.headers['set-cookie'] as string)?.match(new RegExp(`${prodCookieName}=([^;]+)`))?.[1] ?? '';
+    expect(regularUserToken.length).toBeGreaterThan(0);
 
     // --- B. Session Lifecycle Verification ---
 
@@ -607,10 +614,11 @@ it('verifies production cookie attributes, session lifecycle (absolute expiry, i
     const tempLoginRes = await prodApp.inject({
       method: 'POST',
       url: '/auth/login',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       payload: { email: 'temp_active@example.com', password },
     });
-    const tempToken = tempLoginRes.json().token;
+    const tempToken = (tempLoginRes.headers['set-cookie'] as string)?.match(new RegExp(`${prodCookieName}=([^;]+)`))?.[1] ?? '';
+    expect(tempToken.length).toBeGreaterThan(0);
 
     // Verify session is active
     const activeMeRes = await prodApp.inject({
@@ -783,11 +791,12 @@ it('verifies M2.4 Admin User Management, Role Management, Role Assignments, Inva
     const adminLoginRes = await app.inject({
       method: 'POST',
       url: '/auth/login',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       payload: { email: 'm24_superadmin@example.com', password },
     });
     expect(adminLoginRes.statusCode).toBe(200);
-    const adminToken = adminLoginRes.json().token;
+    const adminToken = (adminLoginRes.headers['set-cookie'] as string)?.match(new RegExp(`${cookieName}=([^;]+)`))?.[1] ?? '';
+    expect(adminToken.length).toBeGreaterThan(0);
     const adminCookies = { [cookieName]: adminToken };
 
     // Create a Viewer user with users.read only
@@ -830,10 +839,11 @@ it('verifies M2.4 Admin User Management, Role Management, Role Assignments, Inva
     const viewerLoginRes = await app.inject({
       method: 'POST',
       url: '/auth/login',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       payload: { email: 'm24_viewer@example.com', password },
     });
-    const viewerToken = viewerLoginRes.json().token;
+    const viewerToken = (viewerLoginRes.headers['set-cookie'] as string)?.match(new RegExp(`${cookieName}=([^;]+)`))?.[1] ?? '';
+    expect(viewerToken.length).toBeGreaterThan(0);
     const viewerCookies = { [cookieName]: viewerToken };
 
     // --- A. User Management Tests ---
@@ -854,7 +864,7 @@ it('verifies M2.4 Admin User Management, Role Management, Role Assignments, Inva
     const viewerCreateUserRes = await app.inject({
       method: 'POST',
       url: '/users',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: viewerCookies,
       payload: {
         email: 'new_operator@example.com',
@@ -868,7 +878,7 @@ it('verifies M2.4 Admin User Management, Role Management, Role Assignments, Inva
     const adminCreateUserRes = await app.inject({
       method: 'POST',
       url: '/users',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         email: '  NEW_OPERATOR@Example.Com  ',
@@ -886,7 +896,7 @@ it('verifies M2.4 Admin User Management, Role Management, Role Assignments, Inva
     const duplicateUserRes = await app.inject({
       method: 'POST',
       url: '/users',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         email: 'new_operator@example.com',
@@ -909,7 +919,7 @@ it('verifies M2.4 Admin User Management, Role Management, Role Assignments, Inva
     const updateRes = await app.inject({
       method: 'PATCH',
       url: `/users/${createdUser.id}`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         name: 'Updated Operator Name',
@@ -923,16 +933,18 @@ it('verifies M2.4 Admin User Management, Role Management, Role Assignments, Inva
     const newLoginRes = await app.inject({
       method: 'POST',
       url: '/auth/login',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       payload: { email: 'new_operator@example.com', password: 'NewOperatorPassword123!' },
     });
     expect(newLoginRes.statusCode).toBe(200);
-    const operatorToken = newLoginRes.json().token;
+    const operatorToken = (newLoginRes.headers['set-cookie'] as string)?.match(new RegExp(`${cookieName}=([^;]+)`))?.[1] ?? '';
+    expect(operatorToken.length).toBeGreaterThan(0);
 
     // 8. POST /users/:id/deactivate: deactivates user and terminates sessions
     const deactivateRes = await app.inject({
       method: 'POST',
       url: `/users/${createdUser.id}/deactivate`,
+      headers: { origin: 'http://localhost:3001' },
       cookies: adminCookies,
     });
     expect(deactivateRes.statusCode).toBe(200);
@@ -971,6 +983,7 @@ it('verifies M2.4 Admin User Management, Role Management, Role Assignments, Inva
     const selfDeactivateRes = await app.inject({
       method: 'POST',
       url: `/users/${superAdmin.id}/deactivate`,
+      headers: { origin: 'http://localhost:3001' },
       cookies: adminCookies,
     });
     expect(selfDeactivateRes.statusCode).toBe(400);
@@ -992,7 +1005,7 @@ it('verifies M2.4 Admin User Management, Role Management, Role Assignments, Inva
     const createRoleRes = await app.inject({
       method: 'POST',
       url: '/roles',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         key: 'content_moderator',
@@ -1010,7 +1023,7 @@ it('verifies M2.4 Admin User Management, Role Management, Role Assignments, Inva
     const invalidPermRoleRes = await app.inject({
       method: 'POST',
       url: '/roles',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         key: 'invalid_role',
@@ -1024,7 +1037,7 @@ it('verifies M2.4 Admin User Management, Role Management, Role Assignments, Inva
     const updatePermsRes = await app.inject({
       method: 'PUT',
       url: `/roles/${createdRole.id}/permissions`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         permissions: ['content.read', 'content.update', 'content.publish'],
@@ -1037,7 +1050,7 @@ it('verifies M2.4 Admin User Management, Role Management, Role Assignments, Inva
     const stripSuperAdminRes = await app.inject({
       method: 'PUT',
       url: `/roles/${superAdminRole!.id}/permissions`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         permissions: ['users.read'], // Trying to strip all other system permissions
@@ -1055,7 +1068,7 @@ it('verifies M2.4 Admin User Management, Role Management, Role Assignments, Inva
     const assignSiteRoleRes = await app.inject({
       method: 'POST',
       url: `/users/${viewerUser.id}/roles`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         roleId: createdRole.id,
@@ -1072,7 +1085,7 @@ it('verifies M2.4 Admin User Management, Role Management, Role Assignments, Inva
     const invalidSiteAssignRes = await app.inject({
       method: 'POST',
       url: `/users/${viewerUser.id}/roles`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         roleId: createdRole.id,
@@ -1087,7 +1100,7 @@ it('verifies M2.4 Admin User Management, Role Management, Role Assignments, Inva
     const invalidGlobalAssignRes = await app.inject({
       method: 'POST',
       url: `/users/${viewerUser.id}/roles`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         roleId: createdRole.id,
@@ -1102,7 +1115,7 @@ it('verifies M2.4 Admin User Management, Role Management, Role Assignments, Inva
     const duplicateAssignRes = await app.inject({
       method: 'POST',
       url: `/users/${viewerUser.id}/roles`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         roleId: createdRole.id,
@@ -1127,6 +1140,7 @@ it('verifies M2.4 Admin User Management, Role Management, Role Assignments, Inva
     const deleteSuperAdminAssignRes = await app.inject({
       method: 'DELETE',
       url: `/users/${superAdmin.id}/roles/${superAdminAssignment.id}`,
+      headers: { origin: 'http://localhost:3001' },
       cookies: adminCookies,
     });
     expect(deleteSuperAdminAssignRes.statusCode).toBe(400);
@@ -1136,6 +1150,7 @@ it('verifies M2.4 Admin User Management, Role Management, Role Assignments, Inva
     const deleteViewerAssignRes = await app.inject({
       method: 'DELETE',
       url: `/users/${viewerUser.id}/roles/${siteAssignment.id}`,
+      headers: { origin: 'http://localhost:3001' },
       cookies: adminCookies,
     });
     expect(deleteViewerAssignRes.statusCode).toBe(200);
@@ -1154,6 +1169,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     database,
     nodeEnv: 'production',
     cookieSecret: 'test-production-cookie-secret-min-32-characters!',
+    corsOrigin: 'http://localhost:3001',
   });
 
   try {
@@ -1186,11 +1202,18 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const adminLoginRes = await app.inject({
       method: 'POST',
       url: '/auth/login',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       payload: { email: 'm3_admin@example.com', password },
     });
     expect(adminLoginRes.statusCode).toBe(200);
-    const adminToken = adminLoginRes.json().token;
+    // Security check: raw token is NOT exposed in response body
+    expect(adminLoginRes.json().token).toBeUndefined();
+    expect(adminLoginRes.json().user).toBeDefined();
+    // Cookie is set
+    const adminSetCookie = adminLoginRes.headers['set-cookie'] as string;
+    expect(adminSetCookie).toContain(cookieName);
+    const adminTokenMatch = adminSetCookie.match(new RegExp(`${cookieName}=([^;]+)`));
+    const adminToken = adminTokenMatch ? adminTokenMatch[1] : '';
     const adminCookies = { [cookieName]: adminToken };
 
     // Setup Site A and Site B
@@ -1209,7 +1232,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const createGlobalRes = await app.inject({
       method: 'POST',
       url: '/content-types',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         key: 'm3_article',
@@ -1247,7 +1270,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const createSiteTypeRes = await app.inject({
       method: 'POST',
       url: '/content-types',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         key: 'm3_doctor',
@@ -1274,7 +1297,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const createSingleTypeRes = await app.inject({
       method: 'POST',
       url: '/content-types',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         key: 'm3_site_hero',
@@ -1298,7 +1321,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const shadowGlobalRes = await app.inject({
       method: 'POST',
       url: '/content-types',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         key: 'm3_article',
@@ -1316,7 +1339,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const shadowSiteRes = await app.inject({
       method: 'POST',
       url: '/content-types',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         key: 'm3_doctor',
@@ -1333,7 +1356,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const unsupportedFieldRes = await app.inject({
       method: 'POST',
       url: '/content-types',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         key: 'm3_unsupported',
@@ -1353,7 +1376,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const safeMutationRes = await app.inject({
       method: 'PATCH',
       url: `/content-types/${globalType.id}`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         dataSchema: {
@@ -1374,7 +1397,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const createEntryRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteA.id}/content/m3_article`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         title: 'Alpha Article 1',
@@ -1402,7 +1425,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const updateEntryRes = await app.inject({
       method: 'PATCH',
       url: `/sites/${siteA.id}/content/m3_article/${entryId}`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         expectedRevision: 1,
@@ -1435,7 +1458,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const staleConcurrencyRes = await app.inject({
       method: 'PATCH',
       url: `/sites/${siteA.id}/content/m3_article/${entryId}`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         expectedRevision: 1, // Stale!
@@ -1450,7 +1473,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const createSingleEntryRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteA.id}/content/m3_site_hero`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         title: 'Site A Hero Config',
@@ -1465,7 +1488,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const duplicateSingleRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteA.id}/content/m3_site_hero`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         title: 'Duplicate Hero Attempt',
@@ -1489,6 +1512,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const publishRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteA.id}/content/m3_article/${entryId}/publish`,
+      headers: { origin: 'http://localhost:3001' },
       cookies: adminCookies,
     });
     expect(publishRes.statusCode).toBe(200);
@@ -1511,7 +1535,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const editDraftWhilePublishedRes = await app.inject({
       method: 'PATCH',
       url: `/sites/${siteA.id}/content/m3_article/${entryId}`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         expectedRevision: 2,
@@ -1540,6 +1564,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const publishRev3Res = await app.inject({
       method: 'POST',
       url: `/sites/${siteA.id}/content/m3_article/${entryId}/publish`,
+      headers: { origin: 'http://localhost:3001' },
       cookies: adminCookies,
     });
     expect(publishRev3Res.statusCode).toBe(200);
@@ -1556,7 +1581,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const createEntry2Res = await app.inject({
       method: 'POST',
       url: `/sites/${siteA.id}/content/m3_article`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         title: 'Second Article',
@@ -1572,6 +1597,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const publishConflictRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteA.id}/content/m3_article/${entry2Id}/publish`,
+      headers: { origin: 'http://localhost:3001' },
       cookies: adminCookies,
     });
     expect(publishConflictRes.statusCode).toBe(409);
@@ -1581,6 +1607,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const archiveRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteA.id}/content/m3_article/${entryId}/archive`,
+      headers: { origin: 'http://localhost:3001' },
       cookies: adminCookies,
     });
     expect(archiveRes.statusCode).toBe(200);
@@ -1598,7 +1625,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const breakingMutationRes = await app.inject({
       method: 'PATCH',
       url: `/content-types/${globalType.id}`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         dataSchema: {
@@ -1655,10 +1682,14 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const siteBLoginRes = await app.inject({
       method: 'POST',
       url: '/auth/login',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       payload: { email: 'm3_site_b_editor@example.com', password },
     });
-    const siteBToken = siteBLoginRes.json().token;
+    expect(siteBLoginRes.statusCode).toBe(200);
+    expect(siteBLoginRes.json().token).toBeUndefined();
+    const siteBSetCookie = siteBLoginRes.headers['set-cookie'] as string;
+    const siteBTokenMatch = siteBSetCookie.match(new RegExp(`${cookieName}=([^;]+)`));
+    const siteBToken = siteBTokenMatch ? siteBTokenMatch[1] : '';
     const siteBCookies = { [cookieName]: siteBToken };
 
     // Site B editor can list content on Site B -> 200
@@ -1691,7 +1722,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const createEntryBRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteA.id}/content/m3_article`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         title: 'Entry B for Integrity Test',
@@ -1702,21 +1733,28 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     expect(createEntryBRes.statusCode).toBe(201);
     const revB1Id = createEntryBRes.json().revision.id;
 
-    // Direct DB attempt to point Entry A's current_revision_id to Revision B1:
-    // When attempting to publish Entry A while current_revision_id was tampered to point to Revision B1,
-    // the atomic publish service detects entry_id mismatch and rejects with 400.
-    await database.pool.query(
-      'UPDATE content_entries SET current_revision_id = $1 WHERE id = $2',
-      [revB1Id, entryId]
-    );
+    // Composite foreign keys reject cross-entry pointers directly at PostgreSQL level.
+    await expect(
+      database.pool.query(
+        'UPDATE content_entries SET current_revision_id = $1 WHERE id = $2',
+        [revB1Id, entryId]
+      )
+    ).rejects.toThrow(/fk_content_entries_current_rev/);
 
-    const publishTamperedRes = await app.inject({
-      method: 'POST',
-      url: `/sites/${siteA.id}/content/m3_article/${entryId}/publish`,
-      cookies: adminCookies,
-    });
-    expect(publishTamperedRes.statusCode).toBe(400);
-    expect(publishTamperedRes.json().message).toContain('Integrity violation: revision does not belong to this content entry');
+    await expect(
+      database.pool.query(
+        'UPDATE content_entries SET published_revision_id = $1 WHERE id = $2',
+        [revB1Id, entryId]
+      )
+    ).rejects.toThrow(/fk_content_entries_published_rev/);
+
+    // Composite pointer constraints must still allow deleting an entry and cascading its revisions.
+    await database.pool.query('DELETE FROM content_entries WHERE id = $1', [createEntryBRes.json().entry.id]);
+    const deletedEntryRevision = await database.pool.query(
+      'SELECT 1 FROM content_entry_revisions WHERE id = $1',
+      [revB1Id]
+    );
+    expect(deletedEntryRevision.rowCount).toBe(0);
 
     // 2. ContentType Identity Immutability:
     // Key, scopeKind, siteId are immutable.
@@ -1724,7 +1762,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const patchKeyRes = await app.inject({
       method: 'PATCH',
       url: `/content-types/${globalType.id}`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: { key: 'mutated_key' },
     });
@@ -1734,7 +1772,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const patchKindWithEntriesRes = await app.inject({
       method: 'PATCH',
       url: `/content-types/${globalType.id}`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: { kind: 'single' },
     });
@@ -1748,7 +1786,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
       app.inject({
         method: 'POST',
         url: '/content-types',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
         cookies: adminCookies,
         payload: {
           key: concurrentKey,
@@ -1761,7 +1799,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
       app.inject({
         method: 'POST',
         url: '/content-types',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
         cookies: adminCookies,
         payload: {
           key: concurrentKey,
@@ -1784,7 +1822,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const validLocaleEnRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteA.id}/content/m3_article`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         title: 'English Article',
@@ -1798,7 +1836,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const validLocaleZhRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteA.id}/content/m3_article`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         title: 'Chinese Article',
@@ -1812,7 +1850,7 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     const invalidLocaleRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteA.id}/content/m3_article`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         title: 'Invalid Locale Article',
@@ -1822,6 +1860,213 @@ it('verifies M3.1 CMS Content Types, CMS Field Schema validation, Bi-directional
     });
     expect(invalidLocaleRes.statusCode).toBe(400);
     expect(invalidLocaleRes.json().message).toContain('Invalid locale');
+
+    const missingLocaleRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA.id}/content/m3_article`,
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Missing Locale Article',
+        data: { headline: 'Headline', category: 'news' },
+      },
+    });
+    expect(missingLocaleRes.statusCode).toBe(400);
+    expect(missingLocaleRes.json().message).toContain('Locale is required');
+
+    const missingPublicLocaleRes = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA.id}/content/m3_article/alpha-article-1`,
+    });
+    expect(missingPublicLocaleRes.statusCode).toBe(400);
+    expect(missingPublicLocaleRes.json().message).toContain('locale');
+
+    // 5. Require Optimistic Concurrency:
+    // PATCH without expectedRevision MUST be rejected with 400 Bad Request
+    const patchWithoutExpectedRevisionRes = await app.inject({
+      method: 'PATCH',
+      url: `/sites/${siteA.id}/content/m3_article/${entryId}`,
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Missing Revision Update Attempt',
+        data: { headline: 'No Expected Revision' },
+      },
+    });
+    expect(patchWithoutExpectedRevisionRes.statusCode).toBe(400);
+    expect(patchWithoutExpectedRevisionRes.json().message).toContain('expectedRevision is required');
+
+    // 6. Select Validation: Optional select field with non-null value MUST exist in allowed options
+    const createOptionalSelectTypeRes = await app.inject({
+      method: 'POST',
+      url: '/content-types',
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: {
+        key: 'optional_select_type',
+        name: 'Optional Select Type',
+        kind: 'collection',
+        scopeKind: 'global',
+        dataSchema: {
+          version: 1,
+          fields: [
+            {
+              key: 'flavor',
+              label: 'Flavor',
+              type: 'select',
+              required: false,
+              options: [
+                { label: 'Vanilla', value: 'vanilla' },
+                { label: 'Chocolate', value: 'chocolate' },
+              ],
+            },
+          ],
+        },
+      },
+    });
+    expect(createOptionalSelectTypeRes.statusCode).toBe(201);
+
+    // A: Optional select omitted -> accepted
+    const selectOmittedRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA.id}/content/optional_select_type`,
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Omitted Select',
+        locale: 'en',
+        data: {},
+      },
+    });
+    expect(selectOmittedRes.statusCode).toBe(201);
+
+    // B: Optional select with valid option -> accepted
+    const selectValidRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA.id}/content/optional_select_type`,
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Valid Select',
+        locale: 'en',
+        data: { flavor: 'vanilla' },
+      },
+    });
+    expect(selectValidRes.statusCode).toBe(201);
+
+    // C: Optional select with invalid string -> rejected (400)
+    const selectInvalidRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA.id}/content/optional_select_type`,
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Invalid Select',
+        locale: 'en',
+        data: { flavor: 'strawberry' },
+      },
+    });
+    expect(selectInvalidRes.statusCode).toBe(400);
+    expect(selectInvalidRes.json().message).toContain('is not a valid option for select field');
+
+    // 7. Validate Defaults at Schema Definition Time:
+    // A: Number default = "hello" -> reject (400)
+    const invalidNumberDefaultRes = await app.inject({
+      method: 'POST',
+      url: '/content-types',
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: {
+        key: 'invalid_num_def',
+        name: 'Invalid Num Def',
+        kind: 'collection',
+        scopeKind: 'global',
+        dataSchema: {
+          version: 1,
+          fields: [{ key: 'count', label: 'Count', type: 'number', default: 'hello' }],
+        },
+      },
+    });
+    expect(invalidNumberDefaultRes.statusCode).toBe(400);
+    expect(invalidNumberDefaultRes.json().message).toContain('default must be a number');
+
+    // B: Boolean default = "yes" -> reject (400)
+    const invalidBoolDefaultRes = await app.inject({
+      method: 'POST',
+      url: '/content-types',
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: {
+        key: 'invalid_bool_def',
+        name: 'Invalid Bool Def',
+        kind: 'collection',
+        scopeKind: 'global',
+        dataSchema: {
+          version: 1,
+          fields: [{ key: 'active', label: 'Active', type: 'boolean', default: 'yes' }],
+        },
+      },
+    });
+    expect(invalidBoolDefaultRes.statusCode).toBe(400);
+    expect(invalidBoolDefaultRes.json().message).toContain('default must be a boolean');
+
+    // C: Select default not in options -> reject (400)
+    const invalidSelectDefaultRes = await app.inject({
+      method: 'POST',
+      url: '/content-types',
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: {
+        key: 'invalid_sel_def',
+        name: 'Invalid Select Def',
+        kind: 'collection',
+        scopeKind: 'global',
+        dataSchema: {
+          version: 1,
+          fields: [
+            {
+              key: 'choice',
+              label: 'Choice',
+              type: 'select',
+              default: 'mango',
+              options: [{ label: 'Apple', value: 'apple' }],
+            },
+          ],
+        },
+      },
+    });
+    expect(invalidSelectDefaultRes.statusCode).toBe(400);
+    expect(invalidSelectDefaultRes.json().message).toContain('default value "mango" is not in allowed select options');
+
+    // D: Text default exceeding maxLength -> reject (400)
+    const invalidTextDefaultRes = await app.inject({
+      method: 'POST',
+      url: '/content-types',
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: {
+        key: 'invalid_text_def',
+        name: 'Invalid Text Def',
+        kind: 'collection',
+        scopeKind: 'global',
+        dataSchema: {
+          version: 1,
+          fields: [{ key: 'code', label: 'Code', type: 'text', maxLength: 3, default: 'TOOLONG' }],
+        },
+      },
+    });
+    expect(invalidTextDefaultRes.statusCode).toBe(400);
+    expect(invalidTextDefaultRes.json().message).toContain('default length must be <= maxLength');
+
+    // 8. Assert UUIDv7 for all created M3 entities:
+    const uuidv7Regex = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    expect(globalType.id).toMatch(uuidv7Regex);
+    expect(siteType.id).toMatch(uuidv7Regex);
+    expect(singleType.id).toMatch(uuidv7Regex);
+    expect(entryId).toMatch(uuidv7Regex);
+    expect(entryData.entry.translation_group_id).toMatch(uuidv7Regex);
+    expect(rev1Id).toMatch(uuidv7Regex);
+    expect(rev2Id).toMatch(uuidv7Regex);
   } finally {
     await app.close();
   }
@@ -1833,7 +2078,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     database,
     nodeEnv: 'test',
     cookieSecret: 'test-secret-must-be-at-least-32-chars-long!',
-    corsOrigin: 'http://localhost:3000',
+    corsOrigin: 'http://localhost:3001',
   });
 
   try {
@@ -1880,7 +2125,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const globalCatRes = await app.inject({
       method: 'POST',
       url: '/taxonomies',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         key: 'category',
@@ -1899,7 +2144,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const siteConflictRes = await app.inject({
       method: 'POST',
       url: '/taxonomies',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         key: 'category',
@@ -1915,7 +2160,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const siteTaxRes = await app.inject({
       method: 'POST',
       url: '/taxonomies',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         key: 'campus-dept',
@@ -1934,7 +2179,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const revConflictRes = await app.inject({
       method: 'POST',
       url: '/taxonomies',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         key: 'campus-dept',
@@ -1951,7 +2196,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
       app.inject({
         method: 'POST',
         url: '/taxonomies',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
         cookies: adminCookies,
         payload: {
           key: raceKey,
@@ -1962,7 +2207,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
       app.inject({
         method: 'POST',
         url: '/taxonomies',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
         cookies: adminCookies,
         payload: {
           key: raceKey,
@@ -1980,7 +2225,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const rootRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteA!.id}/taxonomies/category/terms`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         key: 'news',
@@ -1997,7 +2242,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const dupTermRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteA!.id}/taxonomies/category/terms`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         key: 'news',
@@ -2010,7 +2255,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const siteBNewsRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteB!.id}/taxonomies/category/terms`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         key: 'news',
@@ -2025,7 +2270,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const crossSiteParentRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteA!.id}/taxonomies/category/terms`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         key: 'sub-news',
@@ -2040,7 +2285,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const child1Res = await app.inject({
       method: 'POST',
       url: `/sites/${siteA!.id}/taxonomies/category/terms`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: { key: 'c1', name: 'Child 1', parentId: rootTerm.id },
     });
@@ -2051,7 +2296,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const child2Res = await app.inject({
       method: 'POST',
       url: `/sites/${siteA!.id}/taxonomies/category/terms`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: { key: 'c2', name: 'Child 2', parentId: c1.id },
     });
@@ -2061,7 +2306,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const child3Res = await app.inject({
       method: 'POST',
       url: `/sites/${siteA!.id}/taxonomies/category/terms`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: { key: 'c3', name: 'Child 3', parentId: c2.id },
     });
@@ -2071,7 +2316,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const child4Res = await app.inject({
       method: 'POST',
       url: `/sites/${siteA!.id}/taxonomies/category/terms`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: { key: 'c4', name: 'Child 4', parentId: c3.id },
     });
@@ -2081,7 +2326,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const child5Res = await app.inject({
       method: 'POST',
       url: `/sites/${siteA!.id}/taxonomies/category/terms`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: { key: 'c5', name: 'Child 5', parentId: c4.id },
     });
@@ -2092,7 +2337,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const child6Res = await app.inject({
       method: 'POST',
       url: `/sites/${siteA!.id}/taxonomies/category/terms`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: { key: 'c6', name: 'Child 6', parentId: c5.id },
     });
@@ -2104,7 +2349,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const selfParentRes = await app.inject({
       method: 'PATCH',
       url: `/sites/${siteA!.id}/taxonomies/category/terms/${c1.id}`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: { parentId: c1.id },
     });
@@ -2115,7 +2360,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const cycleRes = await app.inject({
       method: 'PATCH',
       url: `/sites/${siteA!.id}/taxonomies/category/terms/${c1.id}`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: { parentId: c3.id },
     });
@@ -2127,7 +2372,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const admRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteA!.id}/taxonomies/category/terms`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: { key: 'admissions', name: 'Tuyển sinh' },
     });
@@ -2139,7 +2384,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const moveRes = await app.inject({
       method: 'PATCH',
       url: `/sites/${siteA!.id}/taxonomies/category/terms/${c3.id}`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: { parentId: adm.id },
     });
@@ -2160,6 +2405,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const deactAdmRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteA!.id}/taxonomies/category/terms/${adm.id}/deactivate`,
+      headers: { origin: 'http://localhost:3001' },
       cookies: adminCookies,
     });
     expect(deactAdmRes.statusCode).toBe(400);
@@ -2169,6 +2415,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const deactC5Res = await app.inject({
       method: 'POST',
       url: `/sites/${siteA!.id}/taxonomies/category/terms/${c5.id}/deactivate`,
+      headers: { origin: 'http://localhost:3001' },
       cookies: adminCookies,
     });
     expect(deactC5Res.statusCode).toBe(200);
@@ -2178,7 +2425,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const ctRes = await app.inject({
       method: 'POST',
       url: '/content-types',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         key: 'article_m32',
@@ -2197,7 +2444,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const invalidBindRes = await app.inject({
       method: 'PUT',
       url: `/content-types/${contentType.id}/taxonomies`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         taxonomies: [{ taxonomyId: siteTax.id, isRequired: true }],
@@ -2210,7 +2457,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const validBindRes = await app.inject({
       method: 'PUT',
       url: `/content-types/${contentType.id}/taxonomies`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         taxonomies: [
@@ -2225,10 +2472,11 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const noCatRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteA!.id}/content/article_m32`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         title: 'Article Without Category',
+        locale: 'vi',
         data: { headline: 'Headline' },
       },
     });
@@ -2239,10 +2487,11 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const inactiveAssignRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteA!.id}/content/article_m32`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         title: 'Article With Inactive Term',
+        locale: 'vi',
         data: { headline: 'Headline' },
         taxonomyAssignments: { category: [c5.id] },
       },
@@ -2254,10 +2503,11 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const maxLimitRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteA!.id}/content/article_m32`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         title: 'Article Exceeding Max Terms',
+        locale: 'vi',
         data: { headline: 'Headline' },
         taxonomyAssignments: { category: [rootTerm.id, c1.id, c2.id] },
       },
@@ -2269,10 +2519,11 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const createEntryRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteA!.id}/content/article_m32`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         title: 'News Headline A',
+        locale: 'vi',
         slug: 'news-a',
         data: { headline: 'News Headline A' },
         taxonomyAssignments: { category: [rootTerm.id] },
@@ -2287,6 +2538,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const pubRes = await app.inject({
       method: 'POST',
       url: `/sites/${siteA!.id}/content/article_m32/${entry.id}/publish`,
+      headers: { origin: 'http://localhost:3001' },
       cookies: adminCookies,
     });
     expect(pubRes.statusCode).toBe(200);
@@ -2296,7 +2548,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const draftRev2Res = await app.inject({
       method: 'PATCH',
       url: `/sites/${siteA!.id}/content/article_m32/${entry.id}`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         expectedRevision: 1,
@@ -2311,7 +2563,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     // Verify Public Content Resolver reads ONLY published revision (Revision 1 with 'news')
     const publicBeforePublish = await app.inject({
       method: 'GET',
-      url: `/public/sites/${siteA!.id}/content/article_m32/news-a`,
+      url: `/public/sites/${siteA!.id}/content/article_m32/news-a?locale=vi`,
     });
     expect(publicBeforePublish.statusCode).toBe(200);
     const pubEntry = publicBeforePublish.json().entry;
@@ -2322,7 +2574,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     // Public filter by term 'news' returns entry
     const publicFilterNews = await app.inject({
       method: 'GET',
-      url: `/public/sites/${siteA!.id}/content/article_m32/taxonomies/category/news`,
+      url: `/public/sites/${siteA!.id}/content/article_m32/taxonomies/category/news?locale=vi`,
     });
     expect(publicFilterNews.statusCode).toBe(200);
     expect(publicFilterNews.json().total).toBe(1);
@@ -2330,7 +2582,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     // Public filter by term 'admissions' does NOT return draft!
     const publicFilterAdm = await app.inject({
       method: 'GET',
-      url: `/public/sites/${siteA!.id}/content/article_m32/taxonomies/category/admissions`,
+      url: `/public/sites/${siteA!.id}/content/article_m32/taxonomies/category/admissions?locale=vi`,
     });
     expect(publicFilterAdm.statusCode).toBe(200);
     expect(publicFilterAdm.json().total).toBe(0);
@@ -2339,13 +2591,14 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const pubRev2Res = await app.inject({
       method: 'POST',
       url: `/sites/${siteA!.id}/content/article_m32/${entry.id}/publish`,
+      headers: { origin: 'http://localhost:3001' },
       cookies: adminCookies,
     });
     expect(pubRev2Res.statusCode).toBe(200);
 
     const publicAfterPublish = await app.inject({
       method: 'GET',
-      url: `/public/sites/${siteA!.id}/content/article_m32/admission-draft`,
+      url: `/public/sites/${siteA!.id}/content/article_m32/admission-draft?locale=vi`,
     });
     expect(publicAfterPublish.statusCode).toBe(200);
     const pubEntry2 = publicAfterPublish.json().entry;
@@ -2356,7 +2609,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const copyForwardRes = await app.inject({
       method: 'PATCH',
       url: `/sites/${siteA!.id}/content/article_m32/${entry.id}`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: {
         expectedRevision: 2,
@@ -2380,7 +2633,7 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
     const updateTermRes = await app.inject({
       method: 'PATCH',
       url: `/sites/${siteA!.id}/taxonomies/category/terms/${adm.id}`,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
       cookies: adminCookies,
       payload: { name: 'Tuyển sinh 2026' },
     });
@@ -2388,12 +2641,530 @@ it('verifies M3.2 Taxonomy Engine: Hybrid scoping, No-shadowing race serializati
 
     const publicLiveTermCheck = await app.inject({
       method: 'GET',
-      url: `/public/sites/${siteA!.id}/content/article_m32/admission-draft`,
+      url: `/public/sites/${siteA!.id}/content/article_m32/admission-draft?locale=vi`,
     });
     expect(publicLiveTermCheck.statusCode).toBe(200);
-    expect(publicLiveTermCheck.json().entry.taxonomies[0].name).toBe('Tuyển sinh 2026');
+    // Assert UUIDv7 for M3.2 Taxonomies & Taxonomy Terms
+    const uuidv7Regex = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    expect(globalCat.id).toMatch(uuidv7Regex);
+    expect(siteTax.id).toMatch(uuidv7Regex);
+    expect(adm.id).toMatch(uuidv7Regex);
   } finally {
     await app.close();
   }
 }, 45000);
 
+it('verifies M3 Final Closure: Public taxonomy multi-site deterministic routing, locale isolation, term/taxonomy deactivation archive regression, and atomic revision-term failure rollback against PostgreSQL 16', async () => {
+  const cookieName = getSessionCookieName(false);
+  const app = buildApp({
+    checkDatabase: async () => {},
+    database,
+    nodeEnv: 'test',
+    cookieSecret: 'test-secret-must-be-at-least-32-chars-long!',
+    corsOrigin: 'http://localhost:3001',
+  });
+
+  try {
+    // 0. Super Admin Session Setup
+    const [closureAdmin] = await database.db
+      .insert(users)
+      .values({
+        email: 'closure_admin@example.com',
+        passwordHash: 'dummy-hash',
+        name: 'Closure Admin',
+      })
+      .returning();
+
+    const superAdminRole = await database.db.query.roles.findFirst({
+      where: (r, { eq: eqOp }) => eqOp(r.key, 'system_super_admin'),
+    });
+
+    await database.db.insert(userRoleAssignments).values({
+      userId: closureAdmin!.id,
+      roleId: superAdminRole!.id,
+      scopeKind: 'global',
+    });
+
+    const rawToken = generateSessionToken();
+    const hashed = hashSessionToken(rawToken);
+    await database.db.insert(sessions).values({
+      userId: closureAdmin!.id,
+      tokenHash: hashed,
+      expiresAt: new Date(Date.now() + 86400000),
+    });
+
+    const adminCookies = { [cookieName]: rawToken };
+
+    // 1. Create two distinct sites for multi-site deterministic scoping
+    const [siteA] = await database.db
+      .insert(sites)
+      .values({ key: 'site-a-closure', name: 'Site A Closure', domain: 'a-closure.example.com' })
+      .returning();
+    const [siteB] = await database.db
+      .insert(sites)
+      .values({ key: 'site-b-closure', name: 'Site B Closure', domain: 'b-closure.example.com' })
+      .returning();
+    expect(siteA).toBeDefined();
+    expect(siteB).toBeDefined();
+
+    // 2. Create Global Taxonomy: 'category-closure'
+    const createTaxRes = await app.inject({
+      method: 'POST',
+      url: '/taxonomies',
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: {
+        key: 'category-closure',
+        name: 'Closure Category',
+        scopeKind: 'global',
+        isHierarchical: true,
+      },
+    });
+    expect(createTaxRes.statusCode).toBe(201);
+    const taxCategory = createTaxRes.json().taxonomy;
+
+    // 3. Create ContentType: 'article_closure' and bind to 'category-closure'
+    const createCtRes = await app.inject({
+      method: 'POST',
+      url: '/content-types',
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: {
+        key: 'article_closure',
+        name: 'Closure Article',
+        kind: 'collection',
+        scopeKind: 'global',
+        dataSchema: {
+          version: 1,
+          fields: [{ key: 'body', label: 'Body Text', type: 'text', required: true }],
+        },
+      },
+    });
+    expect(createCtRes.statusCode).toBe(201);
+    const contentType = createCtRes.json().contentType;
+
+    const bindTaxRes = await app.inject({
+      method: 'PUT',
+      url: `/content-types/${contentType.id}/taxonomies`,
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: {
+        taxonomies: [
+          { taxonomyId: taxCategory.id, isRequired: false, minTerms: 0, maxTerms: 5, sortOrder: 0 },
+        ],
+      },
+    });
+    expect(bindTaxRes.statusCode).toBe(200);
+
+    // 4. Create Terms on Site A and Site B with the SAME key 'news'
+    const termNewsARes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/taxonomies/category-closure/terms`,
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: { key: 'news', name: 'Tin tức Site A' },
+    });
+    expect(termNewsARes.statusCode).toBe(201);
+    const termNewsA = termNewsARes.json().term;
+
+    const termNewsBRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteB!.id}/taxonomies/category-closure/terms`,
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: { key: 'news', name: 'Tin tức Site B' },
+    });
+    expect(termNewsBRes.statusCode).toBe(201);
+    const termNewsB = termNewsBRes.json().term;
+
+    // Create a term exclusive to Site B: 'exclusive-b'
+    const termExclusiveBRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteB!.id}/taxonomies/category-closure/terms`,
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: { key: 'exclusive-b', name: 'Chỉ có ở Site B' },
+    });
+    expect(termExclusiveBRes.statusCode).toBe(201);
+
+    // Create and Publish Article on Site A with termNewsA
+    const createArtARes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/content/article_closure`,
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Site A News Article',
+        locale: 'vi',
+        slug: 'news-site-a',
+        data: { body: 'Content for Site A' },
+        taxonomyAssignments: { 'category-closure': [termNewsA.id] },
+      },
+    });
+    expect(createArtARes.statusCode).toBe(201);
+    const entryA = createArtARes.json().entry;
+
+    const pubArtARes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/content/article_closure/${entryA.id}/publish`,
+      headers: { origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+    });
+    expect(pubArtARes.statusCode).toBe(200);
+
+    // Create and Publish Article on Site B with termNewsB
+    const createArtBRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteB!.id}/content/article_closure`,
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Site B News Article',
+        locale: 'vi',
+        slug: 'news-site-b',
+        data: { body: 'Content for Site B' },
+        taxonomyAssignments: { 'category-closure': [termNewsB.id] },
+      },
+    });
+    expect(createArtBRes.statusCode).toBe(201);
+    const entryB = createArtBRes.json().entry;
+
+    const pubArtBRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteB!.id}/content/article_closure/${entryB.id}/publish`,
+      headers: { origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+    });
+    expect(pubArtBRes.statusCode).toBe(200);
+
+    // -------------------------------------------------------------------------
+    // 5. Multi-Site Deterministic Scope Verification
+    // -------------------------------------------------------------------------
+
+    // Candidate route: GET /public/sites/:siteId/content-types/:typeKey/taxonomies/:taxKey/terms/:termKey/entries
+    // Query Site A -> Returns ONLY Site A content
+    const querySiteARes = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA!.id}/content-types/article_closure/taxonomies/category-closure/terms/news/entries?locale=vi`,
+    });
+    expect(querySiteARes.statusCode).toBe(200);
+    const siteAData = querySiteARes.json();
+    expect(siteAData.total).toBe(1);
+    expect(siteAData.items[0].id).toBe(entryA.id);
+    expect(siteAData.items[0].published_slug).toBe('news-site-a');
+
+    // Query Site B -> Returns ONLY Site B content
+    const querySiteBRes = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteB!.id}/content-types/article_closure/taxonomies/category-closure/terms/news/entries?locale=vi`,
+    });
+    expect(querySiteBRes.statusCode).toBe(200);
+    const siteBData = querySiteBRes.json();
+    expect(siteBData.total).toBe(1);
+    expect(siteBData.items[0].id).toBe(entryB.id);
+    expect(siteBData.items[0].published_slug).toBe('news-site-b');
+
+    // Query with Unknown Site -> 404 NOT_FOUND
+    const queryUnknownSite = await app.inject({
+      method: 'GET',
+      url: `/public/sites/00000000-0000-0000-0000-000000000000/content-types/article_closure/taxonomies/category-closure/terms/news/entries?locale=vi`,
+    });
+    expect(queryUnknownSite.statusCode).toBe(404);
+
+    // Query Site A with term existing ONLY on Site B ('exclusive-b') -> empty total: 0, strictly no cross-site fallback
+    const querySiteACrossTerm = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA!.id}/content-types/article_closure/taxonomies/category-closure/terms/exclusive-b/entries?locale=vi`,
+    });
+    expect(querySiteACrossTerm.statusCode).toBe(200);
+    expect(querySiteACrossTerm.json().total).toBe(0);
+
+    // Locale Isolation: Create Article in Site A with locale 'en'
+    const createEnArtRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/content/article_closure`,
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Site A English Article',
+        slug: 'news-site-a-en',
+        locale: 'en',
+        data: { body: 'English content' },
+        taxonomyAssignments: { 'category-closure': [termNewsA.id] },
+      },
+    });
+    expect(createEnArtRes.statusCode).toBe(201);
+    const enEntry = createEnArtRes.json().entry;
+
+    const pubEnArtRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/content/article_closure/${enEntry.id}/publish`,
+      headers: { origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+    });
+    expect(pubEnArtRes.statusCode).toBe(200);
+
+    // Query Site A with ?locale=vi -> Does NOT return English entry
+    const queryLocaleVi = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA!.id}/content-types/article_closure/taxonomies/category-closure/terms/news/entries?locale=vi`,
+    });
+    expect(queryLocaleVi.statusCode).toBe(200);
+    expect(queryLocaleVi.json().total).toBe(1);
+    expect(queryLocaleVi.json().items[0].id).toBe(entryA.id);
+
+    // Query Site A with ?locale=en -> Returns English entry
+    const queryLocaleEn = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA!.id}/content-types/article_closure/taxonomies/category-closure/terms/news/entries?locale=en`,
+    });
+    expect(queryLocaleEn.statusCode).toBe(200);
+    expect(queryLocaleEn.json().total).toBe(1);
+    expect(queryLocaleEn.json().items[0].id).toBe(enEntry.id);
+
+    // Regional BCP-47 tags use one canonical representation across create, detail, and taxonomy resolvers.
+    const createRegionalArtRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/content/article_closure`,
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Site A Simplified Chinese Article',
+        slug: 'news-site-a-zh',
+        locale: 'zh-cn',
+        data: { body: 'Simplified Chinese content' },
+        taxonomyAssignments: { 'category-closure': [termNewsA.id] },
+      },
+    });
+    expect(createRegionalArtRes.statusCode).toBe(201);
+    expect(createRegionalArtRes.json().entry.locale).toBe('zh-CN');
+    const regionalEntry = createRegionalArtRes.json().entry;
+
+    const publishRegionalArtRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/content/article_closure/${regionalEntry.id}/publish`,
+      headers: { origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+    });
+    expect(publishRegionalArtRes.statusCode).toBe(200);
+
+    const regionalDetailRes = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA!.id}/content/article_closure/news-site-a-zh?locale=zh-cn`,
+    });
+    expect(regionalDetailRes.statusCode).toBe(200);
+    expect(regionalDetailRes.json().entry.id).toBe(regionalEntry.id);
+
+    const regionalTaxonomyRes = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA!.id}/content-types/article_closure/taxonomies/category-closure/terms/news/entries?locale=zh-cn`,
+    });
+    expect(regionalTaxonomyRes.statusCode).toBe(200);
+    expect(regionalTaxonomyRes.json().total).toBe(1);
+    expect(regionalTaxonomyRes.json().items[0].id).toBe(regionalEntry.id);
+
+    // Draft-only taxonomy assignment test:
+    const termFeaturesARes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/taxonomies/category-closure/terms`,
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: { key: 'features', name: 'Tính năng' },
+    });
+    expect(termFeaturesARes.statusCode).toBe(201);
+    const termFeaturesA = termFeaturesARes.json().term;
+
+    const createDraftArtRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/content/article_closure`,
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Draft Features Article',
+        locale: 'vi',
+        slug: 'features-draft',
+        data: { body: 'Draft body' },
+        taxonomyAssignments: { 'category-closure': [termFeaturesA.id] },
+      },
+    });
+    expect(createDraftArtRes.statusCode).toBe(201);
+    const draftEntry = createDraftArtRes.json().entry;
+
+    // Query draft term before publish -> total: 0 (No draft leakage)
+    const queryDraftBeforePub = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA!.id}/content-types/article_closure/taxonomies/category-closure/terms/features/entries?locale=vi`,
+    });
+    expect(queryDraftBeforePub.statusCode).toBe(200);
+    expect(queryDraftBeforePub.json().total).toBe(0);
+
+    // Publish draft entry -> Now public filter matches
+    const pubDraftRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/content/article_closure/${draftEntry.id}/publish`,
+      headers: { origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+    });
+    expect(pubDraftRes.statusCode).toBe(200);
+
+    const queryDraftAfterPub = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA!.id}/content-types/article_closure/taxonomies/category-closure/terms/features/entries?locale=vi`,
+    });
+    expect(queryDraftAfterPub.statusCode).toBe(200);
+    expect(queryDraftAfterPub.json().total).toBe(1);
+    expect(queryDraftAfterPub.json().items[0].id).toBe(draftEntry.id);
+
+    // -------------------------------------------------------------------------
+    // 6. Taxonomy Archive / Public Semantics Regression
+    // -------------------------------------------------------------------------
+
+    // Deactivate Term 'features'
+    const deactTermRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/taxonomies/category-closure/terms/${termFeaturesA.id}/deactivate`,
+      headers: { origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+    });
+    expect(deactTermRes.statusCode).toBe(200);
+
+    // Content Detail: Historical term 'features' is STILL resolvable and displayable
+    const detailAfterDeactTerm = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA!.id}/content/article_closure/features-draft?locale=vi`,
+    });
+    expect(detailAfterDeactTerm.statusCode).toBe(200);
+    const pubEntryDetail = detailAfterDeactTerm.json().entry;
+    expect(pubEntryDetail.taxonomies).toHaveLength(1);
+    expect(pubEntryDetail.taxonomies[0].key).toBe('features');
+    expect(pubEntryDetail.taxonomies[0].is_active).toBe(false);
+
+    // New Revision: Cannot assign inactive term 'features'
+    const newRevInactiveTermRes = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteA!.id}/content/article_closure`,
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: {
+        title: 'Attempt Assign Inactive Term',
+        locale: 'vi',
+        slug: 'attempt-inactive',
+        data: { body: 'Invalid' },
+        taxonomyAssignments: { 'category-closure': [termFeaturesA.id] },
+      },
+    });
+    expect(newRevInactiveTermRes.statusCode).toBe(400);
+    expect(newRevInactiveTermRes.json().message).toContain('Cannot assign inactive taxonomy term');
+
+    // Taxonomy Public Filter: Inactive term 'features' excluded
+    const queryInactiveTerm = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA!.id}/content-types/article_closure/taxonomies/category-closure/terms/features/entries?locale=vi`,
+    });
+    expect(queryInactiveTerm.statusCode).toBe(200);
+    expect(queryInactiveTerm.json().total).toBe(0);
+
+    // Deactivate TAXONOMY 'category-closure'
+    const deactTaxRes = await app.inject({
+      method: 'PATCH',
+      url: `/taxonomies/${taxCategory.id}`,
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: { isActive: false },
+    });
+    expect(deactTaxRes.statusCode).toBe(200);
+
+    // Historical Published Content: Historical revision relation remains intact
+    const detailAfterDeactTax = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA!.id}/content/article_closure/news-site-a?locale=vi`,
+    });
+    expect(detailAfterDeactTax.statusCode).toBe(200);
+    expect(detailAfterDeactTax.json().entry.taxonomies).toHaveLength(1);
+    expect(detailAfterDeactTax.json().entry.taxonomies[0].key).toBe('news');
+
+    // Normal Taxonomy Filter: Taxonomy excluded (returns empty)
+    const queryDeactTax = await app.inject({
+      method: 'GET',
+      url: `/public/sites/${siteA!.id}/content-types/article_closure/taxonomies/category-closure/terms/news/entries?locale=vi`,
+    });
+    expect(queryDeactTax.statusCode).toBe(200);
+    expect(queryDeactTax.json().total).toBe(0);
+
+    // Verify DB integrity: No historical relation rows were deleted
+    const allCrtRows = await database.db.select().from(contentRevisionTerms);
+    expect(allCrtRows.length).toBeGreaterThanOrEqual(4);
+
+    // Reactivate taxonomy for atomicity test
+    await app.inject({
+      method: 'PATCH',
+      url: `/taxonomies/${taxCategory.id}`,
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: { isActive: true },
+    });
+
+    // -------------------------------------------------------------------------
+    // 7. Verify M3 Revision-Term Atomicity (Transaction Rollback)
+    // -------------------------------------------------------------------------
+
+    // Entry A is currently at Revision 1 (current and published)
+    const entryABefore = (await app.inject({
+      method: 'GET',
+      url: `/sites/${siteA!.id}/content/article_closure/${entryA.id}`,
+      cookies: adminCookies,
+    })).json();
+    const currentRevIdBefore = entryABefore.entry.currentRevisionId;
+    const publishedRevIdBefore = entryABefore.entry.publishedRevisionId;
+
+    const revsCountBefore = (await database.pool.query(
+      'SELECT COUNT(*) as count FROM content_entry_revisions WHERE entry_id = $1',
+      [entryA.id]
+    )).rows[0].count;
+
+    const crtCountBefore = (await database.pool.query(
+      'SELECT COUNT(*) as count FROM content_revision_terms'
+    )).rows[0].count;
+
+    // Attempt to create Revision 2 with an invalid / cross-site term assignment (termNewsB belongs to Site B!)
+    const failedRevRes = await app.inject({
+      method: 'PATCH',
+      url: `/sites/${siteA!.id}/content/article_closure/${entryA.id}`,
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3001' },
+      cookies: adminCookies,
+      payload: {
+        expectedRevision: 1,
+        title: 'Faulty Revision Title',
+        data: { body: 'Invalid Body' },
+        taxonomyAssignments: { 'category-closure': [termNewsB.id] }, // Cross-site term error!
+      },
+    });
+    expect(failedRevRes.statusCode).toBe(400);
+    expect(failedRevRes.json().message).toContain('Cross-site taxonomy term');
+
+    // Verify PostgreSQL Transaction Atomicity:
+    // 1. current_revision_id remains Revision 1
+    const entryAAfter = (await app.inject({
+      method: 'GET',
+      url: `/sites/${siteA!.id}/content/article_closure/${entryA.id}`,
+      cookies: adminCookies,
+    })).json();
+    expect(entryAAfter.entry.currentRevisionId).toBe(currentRevIdBefore);
+    expect(entryAAfter.entry.publishedRevisionId).toBe(publishedRevIdBefore);
+
+    // 2. Revision N+1 does not remain orphaned in content_entry_revisions
+    const revsCountAfter = (await database.pool.query(
+      'SELECT COUNT(*) as count FROM content_entry_revisions WHERE entry_id = $1',
+      [entryA.id]
+    )).rows[0].count;
+    expect(revsCountAfter).toBe(revsCountBefore);
+
+    // 3. No partial content_revision_terms rows inserted
+    const crtCountAfter = (await database.pool.query(
+      'SELECT COUNT(*) as count FROM content_revision_terms'
+    )).rows[0].count;
+    expect(crtCountAfter).toBe(crtCountBefore);
+  } finally {
+    await app.close();
+  }
+}, 45000);

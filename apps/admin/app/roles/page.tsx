@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { apiFetch } from '@/lib/api';
 
 interface RoleItem {
   id: string;
@@ -23,7 +24,6 @@ interface PermissionCatalogItem {
 
 export default function RolesManagementPage() {
   const router = useRouter();
-  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:4000';
 
   const [rolesList, setRolesList] = useState<RoleItem[]>([]);
   const [allPermissions, setAllPermissions] = useState<PermissionCatalogItem[]>([]);
@@ -52,8 +52,8 @@ export default function RolesManagementPage() {
     setErrorMessage(null);
     try {
       const [rolesRes, permsRes] = await Promise.all([
-        fetch(`${apiBase}/roles`, { credentials: 'include' }),
-        fetch(`${apiBase}/permissions`, { credentials: 'include' }),
+        apiFetch<{ roles: RoleItem[] }>('/roles'),
+        apiFetch<{ permissions: PermissionCatalogItem[] }>('/permissions'),
       ]);
 
       if (rolesRes.status === 401 || permsRes.status === 401) {
@@ -61,11 +61,9 @@ export default function RolesManagementPage() {
         return;
       }
 
-      if (rolesRes.ok && permsRes.ok) {
-        const rolesData = await rolesRes.json();
-        const permsData = await permsRes.json();
-        setRolesList(rolesData.roles);
-        setAllPermissions(permsData.permissions);
+      if (rolesRes.ok && permsRes.ok && rolesRes.data && permsRes.data) {
+        setRolesList(rolesRes.data.roles);
+        setAllPermissions(permsRes.data.permissions);
       } else {
         setErrorMessage('Failed to load roles and permissions.');
       }
@@ -74,7 +72,7 @@ export default function RolesManagementPage() {
     } finally {
       setLoading(false);
     }
-  }, [apiBase, router]);
+  }, [router]);
 
   useEffect(() => {
     void fetchRolesData();
@@ -86,13 +84,8 @@ export default function RolesManagementPage() {
     setCreateError(null);
 
     try {
-      const res = await fetch(`${apiBase}/roles`, {
+      const { data, ok, error } = await apiFetch<{ role?: RoleItem; message?: string }>('/roles', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest',
-        },
-        credentials: 'include',
         body: JSON.stringify({
           key: createKey,
           name: createName,
@@ -101,9 +94,8 @@ export default function RolesManagementPage() {
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        setCreateError(data.message || 'Failed to create role');
+      if (!ok) {
+        setCreateError(error || data?.message || 'Failed to create role');
         setCreateLoading(false);
         return;
       }
@@ -138,13 +130,8 @@ export default function RolesManagementPage() {
 
     try {
       // 1. Update basic info
-      const updateInfoRes = await fetch(`${apiBase}/roles/${editingRole.id}`, {
+      const updateInfoRes = await apiFetch(`/roles/${editingRole.id}`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest',
-        },
-        credentials: 'include',
         body: JSON.stringify({
           name: editRoleName,
           description: editRoleDesc,
@@ -152,29 +139,22 @@ export default function RolesManagementPage() {
       });
 
       if (!updateInfoRes.ok) {
-        const d = await updateInfoRes.json();
-        setEditError(d.message || 'Failed to update role details');
+        setEditError(updateInfoRes.error || 'Failed to update role details');
         setEditLoading(false);
         return;
       }
 
       // 2. Update permissions if not system_super_admin
       if (!editingRole.isSystem || editingRole.key !== 'system_super_admin') {
-        const updatePermsRes = await fetch(`${apiBase}/roles/${editingRole.id}/permissions`, {
+        const updatePermsRes = await apiFetch(`/roles/${editingRole.id}/permissions`, {
           method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Requested-With': 'XMLHttpRequest',
-          },
-          credentials: 'include',
           body: JSON.stringify({
             permissions: editSelectedPerms,
           }),
         });
 
         if (!updatePermsRes.ok) {
-          const d = await updatePermsRes.json();
-          setEditError(d.message || 'Failed to update role permissions');
+          setEditError(updatePermsRes.error || 'Failed to update role permissions');
           setEditLoading(false);
           return;
         }

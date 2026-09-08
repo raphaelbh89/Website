@@ -14,7 +14,8 @@
     "generate": "drizzle-kit generate",
     "migrate": "tsx src/cli.ts migrate",
     "seed": "tsx src/cli.ts seed",
-    "reset-db": "tsx src/reset-test-db.ts"
+    "reset-db": "tsx src/reset-test-db.ts",
+    "test:upgrade": "tsx src/verify-migration-upgrade.ts"
   },
   "dependencies": {
     "@platform/config": "workspace:*",

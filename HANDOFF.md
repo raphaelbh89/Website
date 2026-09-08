@@ -6,46 +6,34 @@
 
 ### Session State
 
-- M2 overall: `READY_FOR_TEST` (Backend/RBAC `VERIFIED`, Admin UI build `PASS`, Browser E2E `NOT RUN`)
-- M3 overall: `IN_PROGRESS`
-- M3.1 Content Engine DB/API: `VERIFIED`
-- M3.1 Admin UI Build: `PASS`
-- M3.1 Browser Runtime: `NOT RUN / READY_FOR_TEST`
-- M3.1 Overall: `READY_FOR_TEST`
-- M3.2 Taxonomy Engine DB/API: `VERIFIED`
-- M3.2 Admin UI Build: `PASS`
-- M3.2 Browser Runtime: `NOT RUN / READY_FOR_TEST`
-- M3.2 Overall: `READY_FOR_TEST`
+- M3 audit remediation and final closure: `DONE`; exact pre-remediation snapshot remains in `DEV_LOG.md`.
+- M3 backend/API, Admin build, browser runtime, clean migration, upgrade migration and independent QA are verified in `TR-20260908-M3-AUDIT`.
 - M4 / M5: `NOT STARTED`
+- ADR-0010: `Proposed`; do not accept or implement M4 in this task.
 - Target Branch: `main`
 
 ### Completed
 
-- `docs/adr/0009-taxonomy-engine-architecture.md` created, hardened, and accepted.
-- Database migration `0004_condemned_invisible_woman.sql` generated and verified with 0 schema drift via `pnpm db:generate`.
-- Implemented `TaxonomyService` in `apps/api/src/taxonomy.service.ts` covering:
-  - Hybrid scoping (GLOBAL / SITE taxonomies, always site-bound terms).
-  - Bi-directional no-shadowing with PostgreSQL advisory transaction lock (`pg_advisory_xact_lock(hashtext('tax:' || key))`).
-  - Hierarchical subtree move with CTE cycle detection, tree advisory lock (`pg_advisory_xact_lock(hashtext('tree:' || taxId || ':' || siteId))`), depth delta cascade, and maxDepth=5 cap.
-  - Activation/deactivation invariants (parent deactivation blocked if active descendants exist; child activation requires all ancestors active).
-  - ContentType ↔ Taxonomy bindings with scope validation (Global ContentType only binds Global Taxonomies; Site ContentType binds Global or own Site Taxonomies).
-  - Public proof of filtering by taxonomy & term.
-- Updated `ContentService` to handle immutable revision-term snapshotting (`content_revision_terms`), copy-forward snapshotting on draft updates when `taxonomyAssignments` is omitted, validation of required/min/max binding rules, and public content resolver loading published terms.
-- Fastify REST endpoints in `apps/api/src/app.ts` for taxonomies (`/taxonomies`), terms (`/sites/:siteId/taxonomies/:taxKey/terms`), deactivation/activation, ContentType bindings (`/content-types/:contentTypeId/taxonomies`), and public term query (`/public/sites/:siteId/content/:typeKey/taxonomies/:taxKey/:termSlug`).
-- Implemented Admin UI in `apps/admin/app/taxonomies/page.tsx` for taxonomy management, hierarchical tree viewer, add/edit/move terms, and activation toggling.
-- Added comprehensive 6th integration test suite covering all M3.2 acceptance criteria on clean PostgreSQL 16 DB (`m32_clean_verify_db`).
-- Full monorepo verification pipeline: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm test:integration`, `pnpm test:smoke` all PASS. Zero schema drift.
+- Fixed Public Taxonomy Filtering Scope to site-aware endpoints: `GET /public/sites/:siteId/content-types/:typeKey/taxonomies/:taxKey/terms/:termKey/entries` (and alias `/public/sites/:siteId/content/:typeKey/taxonomies/:taxKey/:termSlug`).
+- Implemented and verified strict multi-site deterministic scoping, locale isolation, unknown site 404 handling, cross-site non-fallback, and draft leakage prevention.
+- Implemented Admin ContentType Taxonomy Binding UI in `apps/admin/app/content-types/page.tsx` with modal, allowed taxonomy scope filtering, `isRequired`, `minTerms`, `maxTerms`, and `sortOrder`.
+- Implemented dynamic Content Entry Taxonomy controls in `apps/admin/app/content/page.tsx` with hierarchical tree depth indentation, multi-select checkboxes, current revision terms loading, snapshot persistence, and copy-forward preservation.
+- Implemented and verified Taxonomy Archive/Public semantics regression (historical term display preservation, inactive term assignment rejection, inactive taxonomy filtering exclusion, no relation rows deleted).
+- Verified PostgreSQL transaction atomicity on revision creation failure (zero orphaned revisions, current pointer preservation, no partial term rows).
+- Added comprehensive 7th integration test suite covering all M3 Final Closure criteria on clean PostgreSQL 16 DB (`m3_closure_clean_verify_db`).
+- Full monorepo verification pipeline: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm test:integration`, `pnpm test:smoke`, `pnpm db:generate` all PASS. Zero schema drift.
+- Audit remediation: one Admin API client, cookie-only browser auth with strict provenance checks, UUIDv7, required `expectedRevision`, strict schema/default handling, locale canonicalization, composite pointer FKs and forward-only 0005 upgrade.
+- Complete browser matrix passed through content create, revision 2, publish and logout. Independent QA PASS with no open P0/P1/P2.
 
 ### Not Started
 
-- M4 Media Library & Storage abstraction.
+- M4 Media Library & Storage abstraction implementation (DO NOT create migrations / install packages before ADR acceptance).
 - M5 Page Builder & Module Registry.
-- Browser automation flow verification (Playwright runner binary download unavailable in local environment).
 
 ### Next Recommended Actions
 
-1. Review M3.2 Checkpoint & Verification Evidence.
-2. Architecture Checkpoint for Milestone M4 (Media Library & Storage Abstraction).
+1. Review the hardened M4.1 architecture candidate in `docs/adr/0010-media-storage-and-processing.md`.
+2. Keep it `Proposed`; do not implement M4, install packages, or create migrations until it is explicitly accepted.
 
 ## Template cho handoff sau này
 

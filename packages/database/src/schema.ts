@@ -1,4 +1,5 @@
-import { pgTable, text, timestamp, uuid, boolean, integer, jsonb, primaryKey, index, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, uuid, boolean, integer, jsonb, primaryKey, index, uniqueIndex, unique, check, foreignKey, type AnyPgColumn } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { v7 } from 'uuid';
 
 export const sites = pgTable('sites', {
@@ -97,7 +98,23 @@ export const contentTypes = pgTable('content_types', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   index('content_types_site_id_idx').on(table.siteId),
-  uniqueIndex('content_types_scope_site_key_idx').on(table.scopeKind, table.siteId, table.key),
+  unique('content_types_scope_site_key_idx').on(table.scopeKind, table.siteId, table.key).nullsNotDistinct(),
+]);
+
+export const contentEntryRevisions = pgTable('content_entry_revisions', {
+  id: uuid('id').primaryKey().$defaultFn(v7),
+  entryId: uuid('entry_id').notNull().references((): AnyPgColumn => contentEntries.id, { onDelete: 'cascade' }),
+  versionNumber: integer('version_number').notNull(),
+  schemaVersion: integer('schema_version').notNull(),
+  title: text('title').notNull(),
+  slug: text('slug'),
+  data: jsonb('data').notNull(),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('content_entry_revisions_entry_version_unique_idx').on(table.entryId, table.versionNumber),
+  index('content_entry_revisions_entry_created_idx').on(table.entryId, table.createdAt),
+  unique('uq_content_entry_revisions_entry_id_id').on(table.entryId, table.id),
 ]);
 
 export const contentEntries = pgTable('content_entries', {
@@ -117,23 +134,18 @@ export const contentEntries = pgTable('content_entries', {
 }, (table) => [
   index('content_entries_site_type_locale_idx').on(table.siteId, table.contentTypeId, table.locale, table.lifecycleState),
   uniqueIndex('content_entries_translation_locale_unique_idx').on(table.translationGroupId, table.locale),
-  uniqueIndex('content_entries_single_unique_idx').on(table.siteId, table.contentTypeId, table.locale, table.entryKind),
-  uniqueIndex('content_entries_published_slug_unique_idx').on(table.siteId, table.contentTypeId, table.locale, table.publishedSlug),
-]);
-
-export const contentEntryRevisions = pgTable('content_entry_revisions', {
-  id: uuid('id').primaryKey().$defaultFn(v7),
-  entryId: uuid('entry_id').notNull().references(() => contentEntries.id, { onDelete: 'cascade' }),
-  versionNumber: integer('version_number').notNull(),
-  schemaVersion: integer('schema_version').notNull(),
-  title: text('title').notNull(),
-  slug: text('slug'),
-  data: jsonb('data').notNull(),
-  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  uniqueIndex('content_entry_revisions_entry_version_unique_idx').on(table.entryId, table.versionNumber),
-  index('content_entry_revisions_entry_created_idx').on(table.entryId, table.createdAt),
+  uniqueIndex('content_entries_single_unique_idx').on(table.siteId, table.contentTypeId, table.locale).where(sql`entry_kind = 'single'`),
+  uniqueIndex('content_entries_published_slug_unique_idx').on(table.siteId, table.contentTypeId, table.locale, table.publishedSlug).where(sql`published_slug IS NOT NULL`),
+  foreignKey({
+    columns: [table.id, table.currentRevisionId],
+    foreignColumns: [contentEntryRevisions.entryId, contentEntryRevisions.id],
+    name: 'fk_content_entries_current_rev'
+  }),
+  foreignKey({
+    columns: [table.id, table.publishedRevisionId],
+    foreignColumns: [contentEntryRevisions.entryId, contentEntryRevisions.id],
+    name: 'fk_content_entries_published_rev'
+  }),
 ]);
 
 // ---------------------------------------------------------------------------
@@ -154,7 +166,7 @@ export const taxonomies = pgTable('taxonomies', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   index('taxonomies_site_id_idx').on(table.siteId),
-  uniqueIndex('taxonomies_scope_site_key_idx').on(table.scopeKind, table.siteId, table.key),
+  unique('taxonomies_scope_site_key_idx').on(table.scopeKind, table.siteId, table.key).nullsNotDistinct(),
 ]);
 
 export const taxonomyTerms = pgTable('taxonomy_terms', {
@@ -174,6 +186,8 @@ export const taxonomyTerms = pgTable('taxonomy_terms', {
   uniqueIndex('taxonomy_terms_site_tax_key_unique_idx').on(table.siteId, table.taxonomyId, table.key),
   index('taxonomy_terms_parent_id_idx').on(table.parentId),
   index('taxonomy_terms_tax_site_active_idx').on(table.taxonomyId, table.siteId, table.isActive),
+  check('chk_term_no_self_parent', sql`"parent_id" <> "id"`),
+  check('chk_term_depth_cap', sql`"depth" >= 0 AND "depth" <= 5`),
 ]);
 
 export const contentTypeTaxonomies = pgTable('content_type_taxonomies', {
@@ -185,6 +199,7 @@ export const contentTypeTaxonomies = pgTable('content_type_taxonomies', {
   sortOrder: integer('sort_order').notNull().default(0),
 }, (table) => [
   primaryKey({ columns: [table.contentTypeId, table.taxonomyId] }),
+  check('chk_ct_tax_terms_range', sql`"min_terms" >= 0 AND ("max_terms" IS NULL OR "max_terms" >= "min_terms")`),
 ]);
 
 export const contentRevisionTerms = pgTable('content_revision_terms', {
@@ -196,4 +211,3 @@ export const contentRevisionTerms = pgTable('content_revision_terms', {
   index('content_revision_terms_revision_idx').on(table.revisionId),
   index('content_revision_terms_term_idx').on(table.taxonomyTermId),
 ]);
-

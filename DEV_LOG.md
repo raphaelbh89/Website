@@ -459,3 +459,7 @@ Closed `AUDIT-001` without discarding the pre-existing dirty M3 closure. Unified
 Full regression passed: lint; typecheck 9/9; unit 42/42; build 6/6; integration 7/7 on `m3_final_fresh_20260908_0709`; 0004->0005 upgrade and repeat migration on `m3_final_upgrade_20260908_0709`; production smoke; and zero migration drift. Complete browser runtime passed login through create/edit/publish/logout. Independent QA passed with no open P0/P1/P2 finding.
 
 **Resulting status:** M3 `DONE`. Stop before M4 implementation; ADR-0010 remains a Proposed architecture checkpoint.
+
+### ADR-0010 hardening (documentation only)
+
+Hardened the Proposed M4.1 candidate with private byte-preserved source objects, sanitized public display outputs, opaque keys, streaming storage I/O, typed `content_revision_media` FKs, archive-only lifecycle, image-bomb safeguards, JPEG/PNG/WebP scope, and production R2 custom-domain/cache requirements. Cloudflare pricing/limits wording was checked against official documentation on 2026-09-08. No M4 source, dependency or migration was added.

@@ -10,6 +10,7 @@
 - M3 backend/API, Admin build, browser runtime, clean migration, upgrade migration and independent QA are verified in `TR-20260908-M3-AUDIT`.
 - M4 / M5: `NOT STARTED`
 - ADR-0010: `Proposed`; do not accept or implement M4 in this task.
+- ADR-0010 has been hardened as a documentation-only candidate; its open checkpoint list must be resolved before acceptance.
 - Target Branch: `main`
 
 ### Completed

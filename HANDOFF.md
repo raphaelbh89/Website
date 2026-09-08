@@ -8,9 +8,8 @@
 
 - M3 audit remediation and final closure: `DONE`; exact pre-remediation snapshot remains in `DEV_LOG.md`.
 - M3 backend/API, Admin build, browser runtime, clean migration, upgrade migration and independent QA are verified in `TR-20260908-M3-AUDIT`.
-- M4 / M5: `NOT STARTED`
-- ADR-0010: `Proposed`; do not accept or implement M4 in this task.
-- ADR-0010 has been hardened as a documentation-only candidate; its open checkpoint list must be resolved before acceptance.
+- M4.1 Image Media: `IN_PROGRESS`; M4.2/Menu/Forms/Settings/M5 remain `TODO` and out of scope.
+- ADR-0010: `Accepted` after final hard limits, variant, provider, compensation, schema and consistency decisions.
 - Target Branch: `main`
 
 ### Completed
@@ -28,13 +27,13 @@
 
 ### Not Started
 
-- M4 Media Library & Storage abstraction implementation (DO NOT create migrations / install packages before ADR acceptance).
+- M4.2, Menu, Forms, Settings.
 - M5 Page Builder & Module Registry.
 
 ### Next Recommended Actions
 
-1. Review the hardened M4.1 architecture candidate in `docs/adr/0010-media-storage-and-processing.md`.
-2. Keep it `Proposed`; do not implement M4, install packages, or create migrations until it is explicitly accepted.
+1. Implement and verify the accepted M4.1 Image Media vertical slice.
+2. Stop before M4.2, Menu, Forms, Settings or Page Builder.
 
 ## Template cho handoff sau này
 

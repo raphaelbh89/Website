@@ -4,7 +4,7 @@
 
 ## Project Status
 
-- Stage: `M3_DONE_AWAITING_M4_ARCHITECTURE_CHECKPOINT` (M1 foundation `VERIFIED` [commit `9294b50`]; M3 audit remediation independently verified and full browser runtime completed).
+- Stage: `M4_1_IMPLEMENTATION_IN_PROGRESS` (M2 and M3 `DONE`; ADR-0010 accepted after final limits/provider/compensation/schema consistency review).
 - Source implementation: M3 CMS Core is `DONE`. The closure includes site-aware public taxonomy routing, deterministic multi-site/locale isolation, taxonomy archive semantics, atomic revision-term behavior, strict CMS schemas/defaults, mandatory optimistic concurrency, UUIDv7 business IDs, relational revision-pointer ownership, cookie-safe auth/CSRF transport, one configurable Admin API client, and the complete Admin content/taxonomy workflow. Browser runtime verified login/session, dashboard, users, roles, content types, taxonomy bindings, taxonomies, content create/edit/publish and logout.
 - Target architecture: `Modular Monolith / Monorepo`
 - Multi-Agent workflow: `DEFINED`
@@ -89,7 +89,7 @@ Multi-Agent orchestration based on persistent repo state. No dependency on a sin
 
 Các mục sau phải tạo ADR trước khi implement nếu chưa được chốt:
 
-- object storage provider & media library (M4);
+- provider deployment choice beyond the configurable Local/S3-compatible contract and post-M4.1 media capabilities;
 - visual editor library / Page Builder canvas (M5);
 - theme tokens & design system engine (M6);
 - localization routing & translation UI (M7);
@@ -109,5 +109,4 @@ Các mục sau phải tạo ADR trước khi implement nếu chưa được ch�
 
 ## Next Recommended Milestone
  
-Stop before M4 implementation. Review `ADR-0010` as a **Proposed** M4.1 architecture checkpoint; implementation, packages, and migrations require explicit acceptance first.
-
+Implement and verify only **M4.1 Image Media** under accepted ADR-0010. Stop before M4.2, Menu, Forms, Settings or Page Builder.

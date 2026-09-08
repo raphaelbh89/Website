@@ -486,5 +486,15 @@ Browser responsive/visual verification and hosted CI have not run. PostgreSQL po
 
 **Final status**: M3 Backend/API `VERIFIED`; Admin Build `VERIFIED`; Browser Runtime `VERIFIED`; M3 Overall `DONE`.
 
+---
+
+### TR-20260909-M2-GOVERNANCE — M2 DoD reconciliation
+
+- M2.1 identity persistence, M2.2 authentication/session, M2.3 scoped authorization and M2.4 user/role management already had passing API, PostgreSQL, security, negative-path, build and smoke evidence in their respective test reports.
+- The only documented blocker retaining overall M2 at `READY_FOR_TEST` was browser runtime.
+- `TR-20260908-M3-AUDIT` exercised the same real Admin/API/PostgreSQL runtime and verified login, HttpOnly session persistence, Users, Roles and logout redirect. Independent source audit #2 subsequently passed and explicitly approved M3 `DONE`.
+- No other M2-specific acceptance blocker is recorded in `ISSUES.md` or the prior M2 evidence.
+
+**Governance result**: final documented browser blocker closed; M2 overall status reconciled to `DONE` under `DEFINITION_OF_DONE.md`.
 
 

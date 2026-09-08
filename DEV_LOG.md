@@ -463,3 +463,11 @@ Full regression passed: lint; typecheck 9/9; unit 42/42; build 6/6; integration 
 ### ADR-0010 hardening (documentation only)
 
 Hardened the Proposed M4.1 candidate with private byte-preserved source objects, sanitized public display outputs, opaque keys, streaming storage I/O, typed `content_revision_media` FKs, archive-only lifecycle, image-bomb safeguards, JPEG/PNG/WebP scope, and production R2 custom-domain/cache requirements. Cloudflare pricing/limits wording was checked against official documentation on 2026-09-08. No M4 source, dependency or migration was added.
+
+---
+
+## 2026-09-09 — M4.1 Architecture Accepted and M2 Reconciled
+
+Independent source audit #2 passed and approved M3 `DONE`. The final documented M2 browser blocker is satisfied by the real login/session/Users/Roles/logout flow in `TR-20260908-M3-AUDIT`; M2 is reconciled to `DONE` with explicit rationale in `TR-20260909-M2-GOVERNANCE`.
+
+ADR-0010 now fixes M4.1 formats, hard image limits, variant/cache contract, provider contract tests, Local/S3 adapter boundaries, compensation/failure state machine, three-table database scope, revision/media/taxonomy atomicity, archive semantics, public delivery/security headers, permissions, Admin UI and migration verification. Consistency review found no remaining contradiction; ADR status changed to `Accepted`. Implementation remains limited to M4.1.
